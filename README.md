@@ -1,8 +1,6 @@
-<p align="left">
-  <img src="assets/khk-logo.png" alt="KHK Software logo" width="120">
-</p>
+![KHK Software logo](assets/khk-logo.png)
 
-# Generic Compaction-Handling Skills
+# Generic Compaction-Handling Skills and Other Useful Stuff
 
 Two portable Claude Code skills that protect a long-running chat session against the memory loss caused by context compaction: **`prepare-compact`** (run before compacting) and **`resume`** (run after resuming, whether from a compaction or a fresh session picking up prior work).
 
