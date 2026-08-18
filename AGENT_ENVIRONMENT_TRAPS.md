@@ -60,6 +60,16 @@ Every entry here is one failure: **content corrupted as it crosses a shell bound
 
 ---
 
+### A5. `printf` reinterprets backslash sequences, so what lands is not what you wrote
+
+**What breaks:** `printf` interprets backslash escape sequences in its argument. A Windows-style path written through it is silently transformed -- a backslash followed by certain letters becomes a control character and the rest of the sequence disappears. This bites hardest where the whole point of the file is to hold a literal path, which is exactly the case when building a fixture for a path-detecting check.
+
+**Presents as: SUCCESS, with a clean exit code and a plausible file.** The content is corrupted on write, the file exists, the subsequent commit returns 0, and the committed blob is wrong. Caught only by reading the blob back.
+
+**Detect:** Read the written content back in a *separate* command and compare it byte for byte against what you intended, whenever the content contains backslashes. An exit code proves the command ran, never that it wrote what you meant.
+
+**Do instead:** Write the file with your agent's file-write tool rather than a shell `printf`/`echo`. Where a shell is unavoidable, a single-quoted heredoc passes the bytes through unchanged. The general rule: shell text-emitting builtins reinterpret their input, and every trap in section A shares one remedy -- do not assemble literal content in a shell at all.
+
 ## B. Long-running work: whether it is alive, whether it finished, and who is telling you
 
 ### B1. Piping a long run through `tail`/`head` loses it
@@ -340,6 +350,16 @@ Every entry here is one failure: **content corrupted as it crosses a shell bound
 
 ---
 
+### E9. A test identity left in local git config silently authors every later commit, in every worktree
+
+**What breaks:** `git config --local user.name/user.email`, set to prove some identity-sensitive behaviour, persists after the proof is over — and `--local` is per-*repository*, so it authors every subsequent commit in every linked worktree sharing that repository, including commits by other processes that never touched the setting. A correct global identity does not help; local wins.
+
+**Presents as: SUCCESS.** Every commit succeeds and nothing warns. The author field is read by no gate, no test, and no human in the ordinary course, so the only place it shows is `git log`'s author column. Measured: **twelve consecutive commits across two independent streams** authored under a synthetic `@example.invalid` proof identity, one of them already pushed to the remote before anyone noticed. It surfaced as an incidental aside in an unrelated report, not from any check.
+
+**Detect:** `git config --local --get user.email` before your first commit of a session, and `git log --format='%an <%ae>' -5` when resuming into a repository you did not just configure. A synthetic address — `example.invalid`, `example.com`, `localhost` — in recent history is this, not a contributor.
+
+**Do instead:** Never write an identity into config to run one proof. Scope it to the single invocation: `git -c user.name=... -c user.email=... commit ...` overrides for that command only and writes nothing to `.git/config`, so there is nothing to forget to undo. If a durable override is genuinely needed, unset it in the same change that finishes the work needing it, and re-read the effective identity afterwards in a separate command.
+
 ## F. Content-hash pinning and line endings
 
 ### F1. A fresh clone is not a byte-faithful copy when hash pins, CRLF, and path limits are involved
@@ -384,6 +404,16 @@ Every entry here is one failure: **content corrupted as it crosses a shell bound
 
 ---
 
+### F5. `git add` can normalise line endings into the committed blob, so an archived copy is not the source
+
+**What breaks:** Under git's default `text=auto`, `git add` may rewrite CRLF to LF *into the committed blob*. For content being archived or preserved -- where the bytes **are** the artifact, and often the only copy -- the committed copy is then not the source. A copy-time verification cannot see this, because comparing the two on-disk files happens before git touches anything.
+
+**Presents as: SUCCESS at the copy step, from a check that genuinely compared the files.** Measured while preserving 211 files that existed in exactly one place on disk: the copy's own self-check reported **zero** mismatches, and a fresh checkout from the pushed branch found **9 of 211 not byte-identical**. The entire gap lies inside `git add`, after every check the copying process was able to run.
+
+**Detect:** Verify **from the branch** -- a fresh worktree checked out from the pushed tip, hashed against the original source. Not from the copy operation's own comparison, not from its exit code, and not from the working tree it just wrote. A check that runs before git has not checked git.
+
+**Do instead:** Put a directory-scoped `.gitattributes` carrying `* -text` over the preserved tree, which forces every path under it to be treated as binary -- no normalisation on add or on checkout, on any machine. Add it **before** the first `git add` of that content; afterwards the blob is already normalised and must be re-staged from a source copy that still holds the original bytes. Then verify from the branch anyway.
+
 ## G. Automated pattern detectors
 
 ### G1. A document describing a bad pattern trips the detector built to find that pattern
@@ -397,6 +427,16 @@ Every entry here is one failure: **content corrupted as it crosses a shell bound
 **Do instead:** Fix the detector, never the prose describing what it's for: anchor the match more precisely, structurally exempt the genre of document that legitimately quotes the pattern, and never reword a real, live instruction just to dodge a check. If you're writing about redacting real values, avoid using an actual real value as your example in the first place.
 
 ---
+
+### G2. A validator that re-runs a generator uses the generator in your working tree, not the one in the commit
+
+**What breaks:** A check that proves a generated artifact matches its source by *re-generating and comparing* imports the generator from the working tree, not from the commit under judgement. So a commit whose generated member was produced by an **uncommitted** generator passes, and the committed pair is self-inconsistent: the checked-in tooling cannot reproduce the checked-in output. In a shared working copy this needs no mistake by the committing process -- another process's dirty generator is simply on disk, and any write imports it.
+
+**Presents as: SUCCESS**, and specifically as a clean `valid: true` from a check whose entire purpose is to prove the two agree. Measured: at one commit the committed generated file carried **18** instances of a marker while the generator committed *at that same commit* contained **none** of the logic that emits it. The validation returned valid then and returns valid now, correctly by its own terms.
+
+**Detect:** Compare the two blobs **at the commit** rather than in the working tree -- search the committed output for a token only the new generator emits, then search the committed generator for the code that emits it. Disagreement is the defect. A green validation is not evidence either way, because it is the thing that cannot see this.
+
+**Do instead:** Commit a generated artifact and any generator change **together**, so the pair stays reproducible from its own commit. Before trusting such a validation in a shared working copy, check whether the generator is dirty; a dirty generator belonging to another process is imported silently by your write. Where the two must land separately, regenerate the output from the committed generator after the generator lands.
 
 ## H. Browser and UI testing
 
