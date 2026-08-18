@@ -8,6 +8,8 @@ A large share of these traps **present as SUCCESS** — a green exit code, a pas
 
 ## A. Shell quoting and content assembly
 
+Every entry here is one failure: **content corrupted as it crosses a shell boundary.** Two are Bash, two are PowerShell, and one of those two is specifically about confusing the two shells for each other — the mixed environment is the point, not an accident of where these were found. The rule they all reduce to is stated at A3: content that will be stored should never be assembled by the shell that runs the command. For PowerShell's *language* semantics — collections, parameter binding, scoping, cmdlet behaviour — see section I.
+
 ### A1. Heredoc backslashes silently collapse
 
 **What breaks:** Some shell/heredoc environments collapse doubled backslashes inside heredocs. Every escaped sequence (e.g. `\\n`) you write inside a heredoc can arrive at the receiving program as a real, unescaped character, so a find-and-replace script hunting for the escaped sequence matches zero occurrences.
@@ -370,6 +372,16 @@ A large share of these traps **present as SUCCESS** — a green exit code, a pas
 
 **Do instead:** Treat a genuine problem inside a byte-pinned file as something requiring a deliberate, explicit re-issuing of the pin (a conscious "yes, re-seal this") — never an in-place repair folded into an unrelated bulk pass, and never while anything is actively relying on the current hash.
 
+### F4. A signing or stamping step rewrites the artifact, invalidating every hash taken before it
+
+**What breaks:** Code signing (Authenticode, and equally any step that embeds a version resource, a build id, or a notarization ticket) rewrites the file in place. A checksum manifest, catalog, or digest computed *before* that step describes bytes that no longer exist. No single step is wrong — only the order is — and each one passes its own local check.
+
+**Presents as:** The artifact fails its *own* integrity check at its destination, which reads as corruption in transit, a broken verifier, or a bad download — anywhere but the build. It is worse than a plain mismatch, because the manifest and the files are both authentic; they are simply from two different moments. And where the receiving end treats "signature present but does not verify" as more serious than "unsigned", a correctly signed artifact can be refused harder than one that was never signed at all.
+
+**Detect:** Hash one signed file at the end of the build and compare it against that file's entry in the shipped manifest. A build that never makes this comparison cannot tell the two cases apart. Verifying the signature alone does not catch it — the signature is valid; it is the manifest that is stale.
+
+**Do instead:** Fix the order once, and write it down where the build cannot drift from it: **sign, then checksum, then catalog, then sign the catalog.** Each step covers everything produced before it, and nothing after it rewrites anything it covered. Where some artifact types cannot carry a signature at all (plain `.sql` or `.csv` files shipped alongside signed scripts), a signed catalog over the whole tree — including the checksum file — is what covers them; without it, "signed package" means "signed runner, plus whatever files happened to be sitting next to it".
+
 ---
 
 ## G. Automated pattern detectors
@@ -419,3 +431,113 @@ A large share of these traps **present as SUCCESS** — a green exit code, a pas
 **Do instead:** Launch a real browser engine explicitly with a dedicated, disposable profile/user-data directory — never the machine's default browser, and never incognito/private mode, which can attach to a real ongoing session. When cleaning up browser processes afterward, identify and terminate them by process tree/lineage, *never* by matching on the executable's image name alone — a shared machine can easily have dozens of unrelated browser processes carrying someone else's real, unrelated work, and killing by name risks taking those down too.
 
 ---
+
+## I. PowerShell language and cmdlet semantics
+
+These are language- and cmdlet-level rather than environment-level, and they are here for the same reason as the rest of this file: an agent writing PowerShell meets them repeatedly, and nearly every one of them **presents as success**. All were met in real work on a production PowerShell codebase; several cost a debugging session apiece, and I1 alone accounted for four separate defects.
+
+This section is to PowerShell what C is to Python: the language and its runtime, not the boundary around them. The neighbouring problem — content mangled on its way *through* a shell, including two PowerShell entries — is section A.
+
+### I1. A single-element collection decays to a scalar on return
+
+**What breaks:** A function returning `@(...)` returns a *scalar* whenever the collection happens to hold exactly one element — the pipeline unwraps the array on the way out. The documented fix, the leading-comma idiom `return , @(...)`, then introduces two follow-on traps of its own: a caller that wraps the call in `@()` now nests one array inside another, and the comma idiom throws `ArgumentException: Argument types do not match` when applied to a generic `List` rather than a real array.
+
+**Presents as: SUCCESS, with wrong content, and only at a specific input size.** Zero elements and two elements both behave; one element does not. A parser returning a list of SQL batches returned a bare string for single-batch input, and the consumer that iterated it either iterated its *characters* or concatenated every batch into one command — visible only once a fixture had more than one batch in it. Small test fixtures are overwhelmingly single-element, so the suite is the least likely place this surfaces.
+
+**Detect:** Exercise every collection-returning function at zero, one, *and* two elements, and assert the returned **type** (`-is [array]`) as well as the count. A test that only asserts on content passes in the broken case.
+
+**Do instead:** `return , @($items)` for arrays, `return , $list.ToArray()` for generic lists — and then delete any `@()` the callers wrap around the call, because the two fixes do not compose. Whichever convention you pick, apply it at the boundary and state it once, rather than per call site.
+
+### I2. `@($null)` has a Count of 1
+
+**What breaks:** Wrapping a possibly-absent value in `@(...)` — the standard "make sure this is a collection" idiom — yields a one-element array *containing null* when the value is absent, not an empty array. `@($null).Count` is 1.
+
+**Presents as: SUCCESS.** A guard of the form `if (@($x).Count -gt 0)` passes when there is nothing there. The code behind it then renders a section header with a count of one and no rows beneath it, or loops once over null. The rendered count is the tell, and it looks like an off-by-one in the renderer rather than a truth about the wrapper.
+
+**Detect:** Any `@(...)` around a value that can legitimately be absent — a hashtable key that may not exist, an optional parameter, a property off a partially-populated object.
+
+**Do instead:** Filter as well as wrap: `@($x | Where-Object { $_ })`. Never treat `@(...)` alone as a null-to-empty conversion; it is a scalar-to-collection conversion, and null is a scalar.
+
+### I3. A local variable differing from a parameter only in case *is* that parameter
+
+**What breaks:** PowerShell variable names are case-insensitive, so a local initialized as `$expectedDigest = ''` at the top of a function whose parameter is `-ExpectedDigest` does not shadow the parameter — it overwrites it. The argument the caller passed is gone before the first line of real work.
+
+**Presents as: SUCCESS, and specifically as a caller error.** Every later `if ($ExpectedDigest)` is quietly false, so the function behaves exactly as it should when the optional argument was genuinely not supplied. Nothing warns. In the measured case the only failing test was the *happy path*; every negative test passed while the feature was completely inert, because "does nothing" is the correct answer when the argument really is absent. A suite weighted toward negative cases actively conceals this.
+
+**Detect:** Compare each function's local declarations against its parameter names case-insensitively — a linter rule, not an eyeball pass, because the two names look different on the page. Where a feature "behaves as if the argument was never passed", suspect this before suspecting the caller.
+
+**Do instead:** Give locals names that differ from parameters by more than capitalisation.
+
+### I4. `?` and `*` are wildcards in `-like`, so a containment test matches everything
+
+**What breaks:** `-like` is a wildcard match, not a substring test. `$s -like '*?*'` asks for "any single character with anything either side" and is therefore true for every non-empty string. The same applies to a literal `*`, and to `[` ranges appearing inside what was meant as plain text.
+
+**Presents as: SUCCESS, on the wrong branch every single time** rather than intermittently — which perversely makes it harder to spot, because there is no working case to compare against. A URL builder testing `-like '*?*'` to choose between appending `?` and `&` appended `&` to every URL it ever built, and every request came back HTTP 400.
+
+**Detect:** Grep for `-like` whose pattern contains `?`, `*`, or `[` in a position meant literally. A `-like` test that is never false against real data is this trap.
+
+**Do instead:** Use `.Contains('?')` for containment. Where a wildcard match is genuinely wanted but part of the pattern is literal, escape that part rather than hoping it contains no metacharacters.
+
+### I5. A variable followed by a colon inside a double-quoted string is parsed as a scope qualifier
+
+**What breaks:** A colon immediately following a variable name inside a double-quoted string makes PowerShell read the name as a *scope or drive qualifier* — the same syntax as `$env:PATH` or `$script:x`. Interpolating a host and port that way is not the interpolation you wrote.
+
+**Presents as:** Loudly, at parse time — which is the good case, and the reason this one is cheap. The whole file fails to load, and the error names the variable rather than the colon, so it reads as an undefined-variable problem.
+
+**Do instead:** Brace the name, in the `"${server}:$port"` form.
+
+### I6. `[AllowEmptyCollection()]` on an untyped parameter refuses to bind at all
+
+**What breaks:** The attribute needs a collection-typed parameter to attach to. Put it on an untyped parameter and binding fails with `Argument types do not match` on *every* call, not only the empty ones the attribute was added for.
+
+**Presents as:** A loud binding error complaining about a type mismatch on a parameter that has no declared type — which reads as nonsense, and sends you looking at the argument rather than at the attribute.
+
+**Do instead:** Type the parameter `[object[]]`.
+
+### I7. An unbound typed parameter is null, and forwarding it throws
+
+**What breaks:** A declared-but-not-supplied `[datetime]` (or any non-nullable value type) parameter holds `$null`, not the type's default. Forwarding it unconditionally to another typed parameter throws at the *second* call, not the first.
+
+**Presents as:** A cast error naming a type neither the caller nor the immediate function mentions, one frame further down than where the omission actually happened.
+
+**Do instead:** Splat only what `$PSBoundParameters` actually contains, rather than forwarding every parameter unconditionally.
+
+### I8. `continue` is dynamically scoped and escapes into the caller's loop
+
+**What breaks:** `continue` binds to the nearest enclosing loop **at run time**, not lexically. Module code re-entered through an injected scriptblock, callback, or event handler can therefore `continue` a loop belonging to a completely different caller, several frames up.
+
+**Presents as: SUCCESS, with silently skipped iterations** in a loop whose author has never seen the `continue` that is skipping them. No error, no warning, and a result set quietly short by however many iterations were jumped.
+
+**Detect:** Any `continue` or `break` on a code path reachable from a caller-supplied scriptblock.
+
+**Do instead:** Restructure as nested `if` on those paths. Reserve loop-control keywords for code that certainly owns the loop it is controlling.
+
+### I9. A verification cmdlet's skip list matches file *names*, not paths
+
+**What breaks:** `Test-FileCatalog -FilesToSkip`, and exclusion parameters on several other cmdlets, match against the leaf file name rather than the relative path. A folder-shaped pattern therefore excludes nothing, while a `*.log`-shaped one works. There is no path-shaped exclusion at all, so an entire folder cannot be excluded by any pattern.
+
+**Presents as:** A verification failure listing files you believed you had excluded, which reads as the exclusion parameter being ignored — and the natural next move is to fight the pattern syntax rather than to conclude the parameter cannot express what you need.
+
+**Detect:** Test the exclusion against a file whose *name* is distinctive and whose *folder* is the thing you meant to exclude. If a same-named file in a different folder is also skipped, it is matching on the name.
+
+**Do instead:** Where the exclusion has to be path-shaped, read the catalog's contents directly and do the comparison yourself, rather than expressing the intent in a parameter that cannot carry it.
+
+### I10. A verification cmdlet hashes the whole target tree, including files the current process holds open
+
+**What breaks:** `Test-FileCatalog -Path` does not merely read the catalog; it walks the path given, hashes every file it finds there, and throws outright if any one of them is locked. Pointed at a directory containing a log or transcript that the *running process* has open, it fails on a file with nothing to do with what was being verified.
+
+**Presents as:** A hard failure naming a locked file rather than a verification result — and one that is easy to mistranslate one level up. In the measured case it turned every real deployment into "this package has no catalog", because the deployment run's own open transcript lived inside the tree being verified. Verification never got far enough to report on the artifacts at all.
+
+**Detect:** Any verification call whose target is a live working directory rather than a quiesced artifact. Note specifically whether the process performing the verification writes anything into that tree.
+
+**Do instead:** When you only want to *read* a catalog's contents, point the cmdlet at an empty temporary directory and do the real comparison yourself. More generally: never verify a tree that the verifying process is still writing into.
+
+### I11. Pester: a `BeforeAll` mock is not yet in force, and its loop-control error is usually a misreport
+
+**What breaks:** Two separate things, both about trusting the framework's own account of events. (1) A mock declared in `BeforeAll` is not in effect while that same `BeforeAll` block is still executing, so setup code in the block calls the real implementation. (2) Pester's *"break or continue statement escaped"* error is frequently a **misreported parameter-binding failure** — the real exception is wrapped, and the message you are shown describes a control-flow problem that does not exist.
+
+**Presents as:** (1) as real side effects during setup — a genuine network call, a real file written — while every test in the block passes, because by the time they run the mock is live. (2) as a hunt through the test body for a stray loop-control keyword that is not there.
+
+**Detect:** For (2), read `$_.ErrorRecord.Exception.Message` before believing the surface message. For (1), assert inside `BeforeAll` that the mock is active, or move the setup that depends on it into the block that follows.
+
+**Do instead:** Put anything that must observe a mock into `BeforeEach`, or after the mock declaration in a separate block — never in the same `BeforeAll` that declares it.
