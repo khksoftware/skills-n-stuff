@@ -2,7 +2,7 @@
 
 # Generic Compaction-Handling Skills and Other Useful Stuff
 
-Two portable Claude Code skills that protect a long-running chat session against the memory loss caused by context compaction: **`prepare-compact`** (run before compacting) and **`resume`** (run after resuming, whether from a compaction or a fresh session picking up prior work).
+Three portable Claude Code skills that protect a long-running chat session against the memory loss caused by context compaction: **`wrap-up`** (run first, to quiesce delegated work), **`prepare-compact`** (run before compacting) and **`resume`** (run after resuming, whether from a compaction or a fresh session picking up prior work).
 
 They are written to be project-agnostic — no hardcoded file paths, governance frameworks, or product names — so they can be dropped into any repository's `.claude/skills/` and adapt to whatever session-tracking conventions (or lack of them) that project already has.
 
@@ -15,7 +15,19 @@ A context compaction has the same practical effect on an agent as starting a fre
 
 `prepare-compact` and `resume` are the standing mitigations for these two failure modes, one on each side of the compaction boundary.
 
+There is a third failure mode, upstream of both, and `wrap-up` exists for it. `prepare-compact` describes itself as a bookkeeping pass rather than an audit — which only holds if the state it transcribes has actually settled. Run straight into a session with agents still mid-mutation, it either understates what is live or stalls attempting audit-grade work it was never built for. `wrap-up` is the step that gets a session from *agents actively working* to the quiescent state `prepare-compact` is entitled to assume.
+
 ## What each skill does
+
+### `wrap-up/SKILL.md`
+
+Run before `prepare-compact` whenever anything has been delegated. It is a **coordination pass, not a shutdown** — its job is to bring every live agent to a deliberate, self-reported stopping point, not to kill processes or force anything to stop mid-step. An agent partway through a multi-file edit has not reached a logical pause point merely because it stopped emitting output. It covers:
+
+1. Identifying every outstanding agent and in-flight task fresh, from the environment rather than from this session's memory of what it dispatched — a task can outlive the turn that launched it.
+2. Messaging each one to finish its current atomic unit, durably record anything genuinely finished, and report a clean stopping point: what it finished, what it deliberately left, and what the next step is on resumption.
+3. Handling agents that cannot pause quickly as a **documented exception** rather than a forced interruption at an unsafe point.
+4. Updating task tracking to reflect reality rather than aspiration — paused work marked paused, with the agent's own account of where it stopped.
+5. Verifying it is actually safe to hand off before invoking `prepare-compact`, including that an empty roster was *checked* rather than merely assumed. Those are different facts, and collapsing them lets "nobody looked" read as "nothing is running".
 
 ### `prepare-compact/SKILL.md`
 
