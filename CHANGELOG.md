@@ -4,6 +4,31 @@ All notable changes to these skills are recorded here. Versions follow
 [Semantic Versioning](https://semver.org/), read against the skills as a
 published set rather than against any single file.
 
+## 2.2.0 — 2026-08-25
+
+### Added
+
+- **`B10` — an agent's transcript records what was injected into it, except while it is
+  running.** A runtime that writes a per-agent transcript records injected messages
+  only when they arrive at a **turn boundary**. A message delivered to an agent that is
+  already running is injected into its context and never written to its transcript at
+  all; the same message sent once it has stopped resumes it and *is* recorded, with a
+  structured origin object carrying the sender's unique agent id. So the transcript is
+  a complete inbox record for three classes of injection and silently is not one for
+  the fourth — and the gap falls exactly on messages sent to a **busy** agent, which is
+  when supervision matters.
+
+  **Both directions of the error are live.** A supervisor reconstructing what an agent
+  knew gets a confident wrong answer; and two mid-run sends returning nothing are
+  enough to conclude the transcript is not an inbox at all, discarding a sender-identity
+  record the runtime genuinely does write. Established by execution — a census of 237
+  per-agent transcripts in one session, and a probe agent sent four messages across both
+  delivery boundaries, which recorded only the resume-boundary pair.
+
+  Filed in section B rather than appended at the end, which is where a naive append put
+  it: it belongs with the other traps about whether delegated work is alive and who is
+  telling you.
+
 ## 2.1.0 — 2026-08-25
 
 ### Fixed

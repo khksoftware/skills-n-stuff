@@ -168,6 +168,18 @@ Every entry here is one failure: **content corrupted as it crosses a shell bound
 
 ---
 
+### B10. An agent's transcript records what was injected into it — except while it is running
+
+**What breaks:** A runtime that writes a per-agent transcript records both what the agent emitted and what was injected into it — but only for injections that arrive at a **turn boundary**. A message delivered to an agent that is *already running* is injected into its context and is never written to its transcript at all. The same message sent to that same agent once it has stopped instead **resumes** it, and *is* recorded, as an entry carrying a structured origin object: kind, sender name, the sender's unique agent id, and the body. Terminal task-notifications and coordinator messages are likewise recorded. So the transcript is a complete inbox record for three classes of injection, and silently is not one for the fourth.
+
+**Presents as: SUCCESS.** The transcript parses cleanly, is complete for everything else, and is appended live — measured about five seconds behind a running agent's own file writes. Nothing signals that an entire injection class is missing. A supervisor reconstructing *what did this agent know* gets a confident, wrong answer, and the gap falls precisely on messages sent to a **busy** agent, which is exactly when supervision matters. **The inverse error is equally available:** two mid-run sends, neither recorded, are enough to conclude the transcript is not an inbox at all — a generalisation that would discard the sender-identity record the runtime genuinely does write.
+
+**Detect:** The sender can tell which class it sent, at send time, from the tool's own response string — a *queued for delivery at its next tool round* means mid-turn and will **not** appear on the recipient side, while a *resuming agent* means a turn boundary and will. On the recipient side, scan its transcript for entries carrying an origin object and group them by kind. Measured in one session: a census of 237 per-agent transcripts found 42 injected entries across 24 agents, plus over a thousand more in the main session transcript; a probe agent sent four messages — two mid-turn, two at a resume boundary — recorded only the resume-boundary pair.
+
+**Do instead:** Never treat a recipient's transcript as the complete record of what it was told. Cross-check against the **sender's** own transcript, which records every send as a tool call carrying the full recipient and message — that leg is complete for both classes.
+
+**Remedy:** Where sender identity must be adjudicated rather than trusted, read the sender's unique agent id from a resume-boundary entry's origin object. The sender does not control it, and an attempt to forge a second wrapper from inside the message body is escaped by the runtime, so the origin fields stay authoritative. **Residual worth knowing:** the escaped text still renders close enough to the real thing that a recipient reading rendered prose reported two apparent senders on both spoof attempts. Adjudicate from the record, never from what the recipient believes it saw.
+
 ## C. Python and subprocess
 
 ### C1. A stale or wrong virtual environment produces a wave of fictitious failures
