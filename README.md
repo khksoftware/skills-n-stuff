@@ -65,6 +65,14 @@ Two tools discover skills this way, using the same walk-up convention on differe
 - **Claude Code** looks for `<name>/SKILL.md` under `.claude/skills/`, searched from the current working directory up to the repository root, plus a personal `~/.claude/skills/`.
 - **Codex** looks for `<name>/SKILL.md` under `.agents/skills/`, searched the same way — from the current working directory up to the repository root, plus a personal `$HOME/.agents/skills/` (it also checks an admin-installed system location and its own built-in skills, neither relevant here).
 
+### The simplest install is one personal copy, not one per repository
+
+**If these skills are yours rather than a given project's, install them once under `~/.claude/skills/` (and `$HOME/.agents/skills/` for Codex) and stop there.** A personal skill is available in every project on the machine, so there is no fan-out: nothing to copy into each repository, nothing to re-sync when a file here changes, and no set of copies that can drift apart. Each entry may be a symlink straight back to this folder, which Claude Code follows — and it loads a skill once even when the same target is reachable from more than one location, so overlapping installs do not produce duplicates.
+
+Where a personal and a project copy of the same skill both exist, **the personal one wins**: precedence runs enterprise, then personal, then project.
+
+Use a project install — and `sync_into_repo.py` below — when you actually want the opposite: the skill committed alongside a repository so that everyone working in it, and every cloud or Cowork session, gets it. Those sessions do **not** read `~/.claude/skills/` from your machine, so a personal-only install is invisible to them.
+
 ### Using `sync_into_repo.py`
 
 Run the sync script included in this folder against any target repository:
@@ -88,4 +96,4 @@ For each skill and each destination, the script first attempts a real OS symlink
 
 `.claude/` and `.agents/` are commonly gitignored in a consuming repository, so synced copies placed there are not necessarily durable or version-controlled on their own — this folder remains the durable, version-controlled source of truth; treat everything `sync_into_repo.py` writes elsewhere as disposable, regenerable output.
 
-A newly synced or edited skill file also typically requires a fresh Claude Code (or Codex) session before it's picked up.
+**Claude Code does not need a fresh session to pick up a change.** It watches `~/.claude/skills/`, a project's `.claude/skills/`, and a `.claude/skills/` inside a directory added with `--add-dir`, and picks up an added, edited or removed skill within the current session. The one case that does need a restart is creating a *top-level skills directory that did not exist when the session started* — there was nothing there to watch. (This line claimed the opposite until 2026-08-25.) Codex's reload behaviour is not covered by that documentation; assume a fresh session there unless you have checked.

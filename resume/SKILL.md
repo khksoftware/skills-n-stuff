@@ -62,6 +62,17 @@ Tell the user, in plain terms, what the durable records actually show now that t
 
 ## Note on location
 
-This skill file must live under the **primary working directory's** `.claude/skills/` to be invocable as `/resume` — Claude Code does not scan `.claude/skills/` in additional working directories for slash-command registration. If you use this skill from multiple repositories or working-directory setups, keep a copy in each one's own `.claude/skills/resume/SKILL.md` and update all copies when this file changes, the same convention `prepare-compact` already uses. A newly added or edited skill file also typically requires a fresh session before Claude Code picks it up.
+Install this skill in **one** of two places:
+
+- **Personal — `~/.claude/skills/resume/SKILL.md`.** Available in every project on the machine, so a single install covers all of them: nothing to copy, nothing to keep in step. The entry may be a symlink to a directory elsewhere on disk — Claude Code follows it, and loads the skill once even when the same target is reachable from more than one location.
+- **Project — `<repo>/.claude/skills/resume/SKILL.md`.** Scoped to that repository and committable with it, which is what you want when the skill should travel with the project rather than with the person. Where both exist the personal one wins: precedence runs enterprise, then personal, then project.
+
+**Corrected 2026-08-25, and stated plainly because the previous version of this note cost adopters real work.** It said the file *must* live under the primary working directory's `.claude/skills/`, that additional working directories were not scanned, and that you should therefore keep a copy in every repository and update them all whenever this file changed. **A personal install covers every project; a `.claude/skills/` inside a directory added with `--add-dir` _is_ loaded; and there is no fan-out to maintain.**
+
+**An edit does not need a fresh session either.** Claude Code watches these directories and picks up an added, edited or removed skill within the current session. The one case that genuinely needs a restart is creating a *top-level skills directory that did not exist when the session started* — there was nothing there to watch. This note previously claimed every edit required one.
+
+**The one real limit on the personal install:** Cowork sessions, cloud sessions and routines do not read `~/.claude/skills/` from your machine. If the skill has to work in those, commit it to the repository's `.claude/skills/` or ship it in a plugin.
+
+Codex discovers the same file under `.agents/skills/resume/SKILL.md`, plus a personal `$HOME/.agents/skills/`, by the same walk-up convention. Its reload behaviour is not covered by any of the above — assume a fresh session there unless you have checked.
 
 If a given project also maintains a project-specific, non-generic variant of this skill (naming its own concrete files, governance documents, and incident history), that variant is the one to actually invoke and keep current for that project — this generic version is the portable baseline to adapt from, not a replacement for a project's own tailored copy where one already exists.

@@ -46,6 +46,7 @@ Look for at least:
 - **Corrections that falsify something a durable record still asserts.** If a number, a state, or a present-tense claim was corrected in conversation, some file probably still carries the old version.
 - **Reports from anything delegated.** A subordinate agent's findings reach the orchestrator and nowhere else, unless the agent itself wrote them to a file.
 - **Explicit non-claims and stated limits.** These are what stop a later closure from overclaiming, and they are the first thing a summary drops.
+- **Warnings you have been working around instead of resolving.** A check that keeps failing and keeps getting bypassed, a test that has been red or flaky since early in the session, a deprecation notice, a validator whose output you have read past more than once. **This shape differs in kind from the five above, which is exactly why it is the easiest to miss:** nothing here was said once and lost — the tooling said it *repeatedly*, and each individual decision to move on was defensible by itself. What does not survive a compaction is the **pattern**, because no single instance ever looked worth recording. Name the warning, roughly how often it recurred, and the decision you actually made about it. **"Deliberately deferred, and here is why" is a legitimate answer that belongs in a file** — the failure is leaving it unwritten, because a resumed session meets the next occurrence as though it were the first.
 
 **Confirm each recovered item against what is actually committed, not against memory of having written it.** An item drafted into a file but never committed is in the same position as one never written at all.
 
@@ -89,4 +90,15 @@ Only after this should compaction actually proceed.
 
 ## Note on location
 
-This skill file must live under the **primary working directory's** `.claude/skills/` to be invocable as `/prepare-compact` — Claude Code does not scan `.claude/skills/` in additional working directories for slash-command registration. If you use this skill from multiple repositories or working-directory setups, keep a copy in each one's own `.claude/skills/prepare-compact/SKILL.md` and update all copies when this file changes. A newly added or edited skill file also typically requires a fresh session before Claude Code picks it up.
+Install this skill in **one** of two places:
+
+- **Personal — `~/.claude/skills/prepare-compact/SKILL.md`.** Available in every project on the machine, so a single install covers all of them: nothing to copy, nothing to keep in step. The entry may be a symlink to a directory elsewhere on disk — Claude Code follows it, and loads the skill once even when the same target is reachable from more than one location.
+- **Project — `<repo>/.claude/skills/prepare-compact/SKILL.md`.** Scoped to that repository and committable with it, which is what you want when the skill should travel with the project rather than with the person. Where both exist the personal one wins: precedence runs enterprise, then personal, then project.
+
+**Corrected 2026-08-25, and stated plainly because the previous version of this note cost adopters real work.** It said the file *must* live under the primary working directory's `.claude/skills/`, that additional working directories were not scanned, and that you should therefore keep a copy in every repository and update them all whenever this file changed. **A personal install covers every project; a `.claude/skills/` inside a directory added with `--add-dir` _is_ loaded; and there is no fan-out to maintain.**
+
+**An edit does not need a fresh session either.** Claude Code watches these directories and picks up an added, edited or removed skill within the current session. The one case that genuinely needs a restart is creating a *top-level skills directory that did not exist when the session started* — there was nothing there to watch. This note previously claimed every edit required one.
+
+**The one real limit on the personal install:** Cowork sessions, cloud sessions and routines do not read `~/.claude/skills/` from your machine. If the skill has to work in those, commit it to the repository's `.claude/skills/` or ship it in a plugin.
+
+Codex discovers the same file under `.agents/skills/prepare-compact/SKILL.md`, plus a personal `$HOME/.agents/skills/`, by the same walk-up convention. Its reload behaviour is not covered by any of the above — assume a fresh session there unless you have checked.
