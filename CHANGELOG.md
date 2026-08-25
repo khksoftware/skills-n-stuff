@@ -4,6 +4,55 @@ All notable changes to these skills are recorded here. Versions follow
 [Semantic Versioning](https://semver.org/), read against the skills as a
 published set rather than against any single file.
 
+## 2.1.0 — 2026-08-25
+
+### Fixed
+
+- **The location note at the end of every skill was wrong, in the direction that
+  costs work.** It said the file must live under the primary working directory's
+  `.claude/skills/`, that additional working directories were not scanned, and
+  that anyone using these from more than one repository should therefore keep a
+  copy in each and update every copy whenever a file here changed. Reported by an
+  adopter whose user-level install registered perfectly well, and then checked
+  against the current Claude Code documentation rather than corrected from the
+  report alone.
+
+  A personal skill at `~/.claude/skills/<name>/SKILL.md` is available in every
+  project on the machine. Precedence runs enterprise, then personal, then
+  project, so a personal copy also wins over a project one. An entry may be a
+  symlink to a directory elsewhere on disk, and the same target reachable from
+  more than one location loads once. A `.claude/skills/` inside a directory added
+  with `--add-dir` is loaded, and watched. **There is no fan-out to maintain.**
+
+  **The README's install section has described the locations correctly since
+  2.0.0**, so this repository was contradicting itself in two places at once —
+  the correct answer and the expensive one, shipped side by side.
+
+- **An edit does not need a fresh session, and the note claimed it did.** The
+  report did not raise this one; the same documentation check turned it up.
+  Claude Code watches these directories and picks up an added, edited or removed
+  skill within the current session. Only creating a *top-level skills directory
+  that did not exist when the session started* needs a restart, because nothing
+  was there to watch.
+
+- **The one real limit on a personal install is now stated rather than left to be
+  discovered.** Cowork sessions, cloud sessions and routines do not read
+  `~/.claude/skills/` from the machine, so a project install — and
+  `sync_into_repo.py` — keep their purpose.
+
+### Added
+
+- **`prepare-compact` now sweeps for warnings the session worked around rather
+  than resolved** — a check that keeps failing and keeps getting bypassed, a test
+  red or flaky since early in the session, a validator whose output has been read
+  past more than once. This is a different shape from the five things the sweep
+  already looked for, every one of which was *said once and lost*. Here the
+  tooling said it **repeatedly**, and each individual decision to move on was
+  defensible by itself; what does not survive a compaction is the **pattern**,
+  because no single instance ever looked worth recording. A deliberate deferral
+  is a legitimate answer provided it reaches a file — the failure is leaving it
+  unwritten.
+
 ## 2.0.0 — 2026-08-18
 
 The first tagged release. Everything before this point was published only as a
