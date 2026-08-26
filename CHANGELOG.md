@@ -4,7 +4,34 @@ All notable changes to these skills are recorded here. Versions follow
 [Semantic Versioning](https://semver.org/), read against the skills as a
 published set rather than against any single file.
 
+## 2.2.1 — 2026-08-26
+
+### Fixed
+
+- **`B10` contradicted itself, and the wrong half was the published half.** Its opening
+  states the rule correctly — an injection is recorded only when it arrives at a turn
+  boundary, so a message to a *running* agent is not. Its closing then generalised that
+  away by message class, claiming terminal task-notifications and coordinator messages are
+  *likewise recorded*, making the transcript a complete inbox for three classes and not the
+  fourth. **That is false.** The discriminator is the recipient's state and nothing else:
+  any class delivered to a running agent goes unrecorded.
+
+  Measured by execution: an agent received its own child's terminal notification while it
+  was running and its transcript held 129 entries and **no origin entries at all**, while
+  across 252 per-agent transcripts every one of the 46 origin entries was a resume-boundary
+  entry.
+
+- **The census behind the original claim was misread, not wrong.** The entries it counted as
+  terminal notifications are about background shell commands rather than agents, so they
+  were never evidence for the claim they were cited for. The `Detect` section now says so,
+  because a kind breakdown reads like evidence and is not one until each entry's subject is
+  checked.
+
 ## 2.2.0 — 2026-08-25
+
+> **Superseded in part by 2.2.1.** The sentence below about *three classes of injection*
+> is false; the discriminator is the recipient's running/stopped state, not the message
+> class.
 
 ### Added
 
