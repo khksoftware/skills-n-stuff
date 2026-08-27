@@ -4,6 +4,14 @@ All notable changes to these skills are recorded here. Versions follow
 [Semantic Versioning](https://semver.org/), read against the skills as a
 published set rather than against any single file.
 
+## 2.3.0 — 2026-08-27
+
+### Added
+
+- **`resume` step 4 now sweeps for abandoned worktrees, and `E10` records why.** A run that creates a temporary linked worktree is expected to remove it in finalization; a run that dies or skips that path leaves a full checkout and a registration that nothing retires. Measured: nine registered worktrees on one machine, three of them detached validation checkouts pinned at commits two and three days old, found only because the user asked why their disk was busy.
+
+  The removal criterion is stated so it can be applied without judgement, and rests on one fact worth stating outright: **removing a worktree deletes a checkout and never a branch or a commit**, so the only thing at risk is uncommitted content -- which is why the status check must count untracked paths, the case that has already stopped a removal for real. The skill also requires reporting what was kept, not only what was removed, because a sweep reporting only deletions cannot be checked.
+
 ## 2.2.1 — 2026-08-26
 
 ### Fixed

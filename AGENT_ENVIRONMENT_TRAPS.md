@@ -372,6 +372,17 @@ Every entry here is one failure: **content corrupted as it crosses a shell bound
 
 **Do instead:** Never write an identity into config to run one proof. Scope it to the single invocation: `git -c user.name=... -c user.email=... commit ...` overrides for that command only and writes nothing to `.git/config`, so there is nothing to forget to undo. If a durable override is genuinely needed, unset it in the same change that finishes the work needing it, and re-read the effective identity afterwards in a separate command.
 
+
+### E10. Abandoned worktrees accumulate, and nothing retires them
+
+**What breaks:** A run that creates a temporary linked worktree is expected to remove it in finalization. When the run dies, is interrupted, or simply skips that path, the worktree survives -- a full checkout of the repository on disk, plus a registration inside the repository's own worktree list. Nothing retires either, and no ordinary command reports them as stale.
+
+**Presents as: SUCCESS.** Every run reports normally and nothing warns. `git status` in the main checkout is silent about them, because they are not its files. The residue shows in exactly two places: `git worktree list`, which nobody runs, and disk usage, which nobody attributes. Measured: **nine registered worktrees on one machine** -- three of them detached validation checkouts pinned at commits two and three days old, four more idle since the runs that created them. Found because the user asked why their disk was busy, not by any check.
+
+**Detect:** `git worktree list --porcelain`, then for each entry: does its directory still exist; does `git -C <path> status --short` report anything **counting untracked paths**; is its HEAD already on the mainline (`git merge-base --is-ancestor <head> <mainline>`); and how old is that HEAD (`git log -1 --format=%ci <head>`). Use the commit's date, not the directory's mtime -- any stray read touches the latter.
+
+**Do instead:** Remove with `git worktree remove <path>`, never a recursive directory delete. **`git worktree remove` deletes a checkout and never a branch or a commit**, so the only thing a removal can destroy is uncommitted content -- which is exactly why the status check has to count untracked files and not merely modified ones, and it is the case that has already stopped one removal for real. A recursive delete is worse than redundant: on some platforms a git directory's loose objects are read-only, so the delete half-fails and leaves both a partial directory and a registration pointing into it. Skip anything `git worktree list` marks `locked` -- a lock means a run owns it right now.
+
 ## F. Content-hash pinning and line endings
 
 ### F1. A fresh clone is not a byte-faithful copy when hash pins, CRLF, and path limits are involved
