@@ -1,4 +1,4 @@
-![KHK Software logo](assets/khk-logo.png)
+![alt](https://github.com/khksoftware/khksoftware/raw/main/assets/skills-n-stuff-card.jpg)
 
 # Generic Compaction-Handling Skills and Other Useful Stuff
 
