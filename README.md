@@ -56,6 +56,20 @@ The symmetric counterpart, run right after a compaction or at the start of a ses
 
 If a project maintains its own project-specific, non-generic variant of either skill (naming its own concrete governance documents, file paths, and incident history), that tailored variant is the one to actually invoke and keep current — these generic versions are the portable baseline to adapt from, not a replacement for it.
 
+## Agent environment traps
+
+[`AGENT_ENVIRONMENT_TRAPS.md`](AGENT_ENVIRONMENT_TRAPS.md) is a separate, portable reference for environment- and tool-level failure modes encountered in real agentic coding work. It is not a fourth compaction skill and is not meant to be copied wholesale into every prompt. Its entries explain what breaks, how the failure presents — often as apparent success — how to detect it, and the safer alternative or remedy.
+
+Use it as follows:
+
+1. **Before a risky or unfamiliar operation**, search the document for the relevant tool or boundary: shell quoting, Git and worktrees, subprocesses, long-running tests, generated files, browser checks, PowerShell, or another matching section.
+2. **When evidence looks suspicious**, search by symptom as well as by command. A clean exit code, passing test, empty result, consistent report, or plausible failure count may itself be the trap.
+3. **Apply the relevant entry at the point of work.** Follow its detection step before trusting the result, use the stated safer alternative, and verify the resulting artifact or effect independently where the entry requires it.
+4. **Project the applicable traps into local operating guidance when needed.** A consuming project may adopt or narrow the entries that match its environment; its own more specific rules remain authoritative. The portable document stays a reusable reference rather than becoming a second copy of project governance.
+5. **Add only evidence-backed traps.** A new entry should describe an observed, reproducible failure and distinguish the failure signal from the remedy. Avoid speculative warnings and duplicate entries for the same underlying class.
+
+The practical habit is simple: consult the file before choosing a fragile mechanism, and consult it again whenever a tool reports an answer that is technically successful but does not fit the surrounding evidence.
+
 ## Installing into a project
 
 This folder — wherever you clone or check it out to — is the single git-tracked master copy of these skills. A consuming repository never edits its own copy directly; it receives a synced copy (or symlink) generated from here, and stays current by re-running the sync script after something changes in this folder.
