@@ -4,6 +4,24 @@ All notable changes to these skills are recorded here. Versions follow
 [Semantic Versioning](https://semver.org/), read against the skills as a
 published set rather than against any single file.
 
+## 2.5.0 — 2026-09-01
+
+### Added
+
+- **`D10`: a dependency manifest added above your tests silently re-bases every node id.** A
+  file that declared no build backend, no runner configuration and nothing the runner reads
+  still moved the test runner's root directory, re-basing every collected identifier. That
+  voided every path-qualified deselection in an isolated-worktree harness — which does not
+  warn when a deselection matches nothing — and reselected ten environment-dependent
+  "is this checkout armed" classes in the one place they cannot pass. Twenty failures, all
+  attributed to the gates rather than to the manifest that caused them.
+
+  Worth reading for the detection note rather than the cause: the signal was not in the
+  failures at all. It was that the cache-residue path had gained a subdirectory prefix and the
+  summary had stopped reporting a deselected count. It also records the fix that does not
+  work: a repository-root configuration cannot override it, because the runner stops at the
+  nearest anchor.
+
 ## 2.4.1 — 2026-09-01
 
 ### Added

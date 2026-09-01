@@ -415,6 +415,39 @@ which pipeline mangled it.
 
 **Do instead:** Pass the cache-disabling flag explicitly in the inner command too, or set it through the environment so it is inherited. Do not assume any runner flag crosses a process boundary.
 
+### D10. A dependency manifest added anywhere above your tests silently re-bases every node id
+
+**What breaks:** The test runner picks its root directory by walking UP from the common
+ancestor of the paths it is given, and it anchors on a project manifest (— `pyproject.toml`
+and its equivalents) even when that file declares no build backend, no runner configuration,
+and nothing the runner reads. Adding a dependency declaration at `<subtree>/pyproject.toml`
+therefore makes `<subtree>` the root, and EVERY collected node id is re-based against it:
+`<subtree>/tests/test_x.py::Class::test` becomes `tests/test_x.py::Class::test`.
+
+**Presents as: a DIFFERENT test failing, in a file you did not touch.** Every
+`--deselect <repo-relative-path>::<Class>` argument silently stops matching, and the runner
+does NOT warn about a deselection that matches nothing, so previously excluded nodes quietly
+run again. Measured case: a new dependency manifest re-selected ten environment-dependent
+"is this checkout armed" classes inside an isolated validation worktree where they cannot
+pass, producing twenty failures — every one attributed to the gates rather than to the
+manifest. The commit that added it passed its own targeted tests.
+
+**The tell is not in the failures.** It is in the harness metadata: the cache-residue path had
+moved from `.pytest_cache/` to `<subtree>/.pytest_cache/`, and the run summary no longer
+reported ANY deselected count at all.
+
+**Detect:** Run the collector on one target with collection-only output and read the reported
+root and config file, then check whether printed node ids still carry the prefix your tooling
+pins. Do this BEFORE and AFTER adding any file the runner treats as a project anchor. A
+passing targeted run proves nothing here: what changes is the identifiers, not the outcomes.
+
+**Do instead:** Do not give a pure dependency-declaration file a name your test runner claims,
+unless that subtree is genuinely a distribution. Use a name it ignores, and pin the choice with
+a test asserting the forbidden name is absent — the next person to reach for the
+conventional name will not know why it is wrong. Note that a repository-root configuration
+CANNOT rescue this: the runner stops at the FIRST anchor going up, which is always the nearer
+one.
+
 ## E. Git: history, worktrees, hooks, staging
 
 ### E1. `git rev-list --all` under-reports a repository whose history was rewritten
