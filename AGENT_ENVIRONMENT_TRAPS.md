@@ -82,13 +82,40 @@ Every entry here is one failure: **content corrupted as it crosses a shell bound
 
 ### A7. Deleting a function body by line range swallows the module-level names that follow it
 
-**What breaks:** Removing a function by deleting a line range that runs to "the line before the next `def`" also deletes anything that sits *between* the end of that function and the next definition � module-level constants, compiled patterns, aliases, comments that other code depends on. Those lines are not part of the function, but they are inside the range.
+**What breaks:** Removing a function by deleting a line range that runs to "the line before the next `def`" also deletes anything that sits *between* the end of that function and the next definition — module-level constants, compiled patterns, aliases, comments that other code depends on. Those lines are not part of the function, but they are inside the range.
 
 **Presents as: a `NameError` far from the edit**, at import time or on first use, naming a symbol you never touched and cannot find any reason for having removed. The diff looks like a clean function removal because the deleted constants are visually adjacent to the function above them.
 
 **Detect:** Before deleting a range, read the last few lines of it. After deleting, diff the module's top-level symbol set (parse it and list its module-level assignments and definitions) before and after; the only difference should be the function you meant to remove.
 
-**Do instead:** Delete by *syntax node* rather than by line range � parse, locate the function definition's own start and end, and remove exactly that. Where you must use a line range, end it at the last line of the function body rather than at the line before the next definition.
+**Do instead:** Delete by *syntax node* rather than by line range — parse, locate the function definition's own start and end, and remove exactly that. Where you must use a line range, end it at the last line of the function body rather than at the line before the next definition.
+
+### A8. Non-ASCII characters can be corrupted when a file is authored, not when it is written
+
+**What breaks:** A character outside ASCII — an em dash, a curly quote, an accented letter
+— can be replaced by U+FFFD REPLACEMENT CHARACTER somewhere in the chain that
+authors a file, before any code you wrote ever runs. A script that then reads that file and
+copies its text through to a destination propagates the corruption faithfully, so the
+destination looks like the culprit and is not.
+
+**Presents as: SUCCESS, and invisible from both ends.** The script runs, exits zero and
+reports the right number of items written. The output looks correct in a terminal that
+cannot render the character anyway, so a spot check passes. The damage is visible only in a
+renderer — which usually means a human reading the published result, long after the run.
+
+**Detect:** Count the replacement character in the bytes, at both ends. If the SOURCE
+already contains it and contains none of the character you intended, the corruption happened
+when the source was authored, not when it was written or read — and every downstream
+suspicion (encoding on write, line-ending passes, the destination's own tooling) is wasted
+effort. U+FFFD is never an authored character: a decoder substitutes it for bytes it could
+not interpret, so its presence in text somebody wrote is always a defect.
+
+**Do instead:** Prefer ASCII in generated content — a double hyphen carries an em dash's
+meaning and cannot be corrupted. Where a non-ASCII character is genuinely required, build it
+from its codepoint (`chr(0x2014)`) rather than writing the literal, so it never travels
+through the authoring path at all. And add a standing check that refuses a replacement
+character in authored text: the symptom is exact, cheap to detect, and needs no knowledge of
+which pipeline mangled it.
 
 ## B. Long-running work: whether it is alive, whether it finished, and who is telling you
 
@@ -202,19 +229,19 @@ Every entry here is one failure: **content corrupted as it crosses a shell bound
 
 ### B11. Backgrounding with `&` inside one shell invocation dies at that invocation's teardown
 
-**What breaks:** Launching a long job with a trailing `&` inside a single agent shell call does not survive the call. When the invocation returns, its process group is torn down and the backgrounded child goes with it � often before it has written anything.
+**What breaks:** Launching a long job with a trailing `&` inside a single agent shell call does not survive the call. When the invocation returns, its process group is torn down and the backgrounded child goes with it — often before it has written anything.
 
 **Presents as: SUCCESS followed by an empty output file.** The shell call exits 0 because backgrounding succeeded; the job simply is not running any more. If the command redirected to a file, the file exists and is zero bytes, which reads as "still starting up" rather than "already dead", and polling it looks like patience rather than a mistake.
 
 **Detect:** Check for the process a few seconds after the call returns, not just for the output file. An output file that stays exactly zero bytes while no matching process exists is the signature.
 
-**Do instead:** Use the runtime's own mechanism for detached/background execution � the one that returns a handle and outlives the call � rather than shell backgrounding inside a single invocation. If you only have the shell, run the job in the foreground and accept the wait.
+**Do instead:** Use the runtime's own mechanism for detached/background execution — the one that returns a handle and outlives the call — rather than shell backgrounding inside a single invocation. If you only have the shell, run the job in the foreground and accept the wait.
 
 ### B12. A per-session scratch directory is shared by every parallel worker, so siblings overwrite each other
 
 **What breaks:** A scratch/temp directory scoped "per session" is shared by every worker that session launches. Two workers told to write a helper script at the same conventional path inside it will overwrite each other, mid-run, with no error.
 
-**Presents as: one worker running the other's code.** The second write lands between the first worker's write and its execution, so the first worker executes logic it never authored � usually producing plausible but wrong results, or an error mentioning parameters that worker never had.
+**Presents as: one worker running the other's code.** The second write lands between the first worker's write and its execution, so the first worker executes logic it never authored — usually producing plausible but wrong results, or an error mentioning parameters that worker never had.
 
 **Detect:** Have each worker write to a path that includes its own identity, then assert immediately before execution that the file's content is still what it wrote. A checksum taken at write time and re-checked at run time turns this from invisible into loud.
 
@@ -224,11 +251,11 @@ Every entry here is one failure: **content corrupted as it crosses a shell bound
 
 **What breaks:** Some agent transcripts are append-only *logs of state*, not append-only logs of *events*: the same entry can be written again when it is revised, re-sent, or re-rendered. Counting lines, or counting occurrences of a marker, therefore counts revisions rather than events.
 
-**Presents as: a confidently wrong number, always too high.** Nothing errors. The count is plausible, reproducible, and quoted onward as evidence � and the inflation is invisible precisely because re-appended entries are byte-similar to the originals, so a spot check of any individual line looks correct.
+**Presents as: a confidently wrong number, always too high.** Nothing errors. The count is plausible, reproducible, and quoted onward as evidence — and the inflation is invisible precisely because re-appended entries are byte-similar to the originals, so a spot check of any individual line looks correct.
 
 **Detect:** Deduplicate on a stable identity (an entry id, a timestamp plus author, a content hash) before counting anything, and compare the deduplicated total against the raw total. A large gap means the transcript re-appends.
 
-**Do instead:** Never derive a count from raw line or occurrence totals in a transcript. Extract identities first, deduplicate, then count � and when you publish the number, say which identity you deduplicated on, because a different choice produces a different number.
+**Do instead:** Never derive a count from raw line or occurrence totals in a transcript. Extract identities first, deduplicate, then count — and when you publish the number, say which identity you deduplicated on, because a different choice produces a different number.
 
 ## C. Python and subprocess
 
@@ -272,11 +299,11 @@ Every entry here is one failure: **content corrupted as it crosses a shell bound
 
 **Detect:** Run the same check on a file you know is valid. If that also fails, the problem is the output target, not the input.
 
-**Do instead:** Parse the source instead of compiling it � the language's own parser gives you a syntax verdict with no output artifact at all. Where you must compile, write the artifact to a real temporary path and delete it, rather than to a platform null device.
+**Do instead:** Parse the source instead of compiling it — the language's own parser gives you a syntax verdict with no output artifact at all. Where you must compile, write the artifact to a real temporary path and delete it, rather than to a platform null device.
 
 ### C5. Importing a vendored src-layout package by bare name resolves to an empty namespace package
 
-**What breaks:** A vendored dependency laid out as `<vendor>/src/<package>/` is importable only if `<vendor>/src` is on the path. If the *parent* directory is on the path instead, the bare package name still "imports" � because the directory `<vendor>/<package>` may exist as an implicit namespace package with nothing in it.
+**What breaks:** A vendored dependency laid out as `<vendor>/src/<package>/` is importable only if `<vendor>/src` is on the path. If the *parent* directory is on the path instead, the bare package name still "imports" — because the directory `<vendor>/<package>` may exist as an implicit namespace package with nothing in it.
 
 **Presents as: a successful import followed by an `AttributeError`.** The import statement succeeds, so the failure surfaces later and elsewhere, at the first attribute access, reading as "this library does not have that function" rather than "this is not that library".
 
@@ -286,13 +313,13 @@ Every entry here is one failure: **content corrupted as it crosses a shell bound
 
 ### C6. A bare import of your own package can resolve to a different checkout of the same repository
 
-**What breaks:** When several checkouts of one repository exist on a machine � linked worktrees, validation copies, a sibling clone � a bare import of the project's own package resolves by path order, not by which checkout you are working in. You can be editing one copy and importing another.
+**What breaks:** When several checkouts of one repository exist on a machine — linked worktrees, validation copies, a sibling clone — a bare import of the project's own package resolves by path order, not by which checkout you are working in. You can be editing one copy and importing another.
 
 **Presents as: edits that have no effect.** You change a function, re-run, and the old behaviour persists. The natural conclusion is a caching problem, and time goes into clearing caches that were never involved.
 
 **Detect:** Print the imported module's file location and compare it against the checkout you are actually in. They should share a root; when they do not, that is the whole bug.
 
-**Do instead:** Make the path explicit � insert your own checkout's source root at the front of the path before importing � and assert the resolved location matches your working directory. Do this in any tool that can run from more than one checkout.
+**Do instead:** Make the path explicit — insert your own checkout's source root at the front of the path before importing — and assert the resolved location matches your working directory. Do this in any tool that can run from more than one checkout.
 
 ## D. pytest and test collection scope
 
@@ -362,7 +389,7 @@ Every entry here is one failure: **content corrupted as it crosses a shell bound
 
 **What breaks:** A test suite that reads shared, live files while another process is writing them can fail on content that was true for only an instant. The suite is not flaky in the usual sense: it observed a real, transient state.
 
-**Presents as: a failure that vanishes on re-run**, which is the single most misdiagnosed shape there is. The natural reading is "flaky test, run it again", and running it again does pass � so the underlying race is filed as noise and stays.
+**Presents as: a failure that vanishes on re-run**, which is the single most misdiagnosed shape there is. The natural reading is "flaky test, run it again", and running it again does pass — so the underlying race is filed as noise and stays.
 
 **Detect:** Ask whether the assertion's subject is a file any other process writes. If it is, the failure is a race and not a flake, and re-running proves nothing either way.
 
@@ -372,7 +399,7 @@ Every entry here is one failure: **content corrupted as it crosses a shell bound
 
 **What breaks:** Selecting which tests to run "from what changed" is usually implemented as a diff against the working tree plus untracked files. On a checkout shared by several processes, every other process's uncommitted work is attributed to your change and selects tests you have no relationship with.
 
-**Presents as: SUCCESS, with a larger scope than your change warrants.** The plan is produced, names more areas than you touched, and names no other process. You either pay for the inflated run, or � worse � you read another process's failures as your own result.
+**Presents as: SUCCESS, with a larger scope than your change warrants.** The plan is produced, names more areas than you touched, and names no other process. You either pay for the inflated run, or — worse — you read another process's failures as your own result.
 
 **Detect:** Compare the selection against a real *commit range* rather than against the working-tree diff. A selection naming areas no file in that range touches is this, not a surprising dependency.
 
@@ -382,7 +409,7 @@ Every entry here is one failure: **content corrupted as it crosses a shell bound
 
 **What breaks:** Disabling the test runner's cache plugin on the outer invocation does not propagate to a test that itself spawns the runner as a subprocess. The inner run uses its own defaults and writes cache directories wherever it happens to be executing.
 
-**Presents as: cache residue in a directory that is under an exact-content check**, failing a hygiene or allowlist assertion that has nothing to do with the test that caused it � often in a later, unrelated run.
+**Presents as: cache residue in a directory that is under an exact-content check**, failing a hygiene or allowlist assertion that has nothing to do with the test that caused it — often in a later, unrelated run.
 
 **Detect:** After a suite that spawns nested runs, look for cache directories under the working directories those subprocesses used. Their presence despite the outer flag is the signature.
 
@@ -497,7 +524,7 @@ Every entry here is one failure: **content corrupted as it crosses a shell bound
 
 **What breaks:** "Is the tree clean?" asked with a bare status command answers for the *whole repository*. On a checkout several processes share, another process's unrelated dirty file makes your gate refuse, and your own genuinely clean area is indistinguishable from a dirty one.
 
-**Presents as: a refusal that names somebody else's file**, or � worse, in the other direction � a "clean" claim you then quote as covering your own paths when it was never scoped to them.
+**Presents as: a refusal that names somebody else's file**, or — worse, in the other direction — a "clean" claim you then quote as covering your own paths when it was never scoped to them.
 
 **Detect:** Ask for status on an explicit path list and compare it against the unscoped answer. A difference means your gate has been answering a broader question than you asked.
 
@@ -507,7 +534,7 @@ Every entry here is one failure: **content corrupted as it crosses a shell bound
 
 **What breaks:** In commands that take `-- <paths>`, everything after the separator is a path. An option written there is not an option: it becomes another path to operate on, and its argument becomes yet another.
 
-**Presents as: BOTH ways, and the silent one is worse.** Loud form: an error naming your option or its argument as an unmatched path � true, but easily misread as a corrupted command line. Silent form: on a query command, a misplaced formatting option is accepted as a non-matching pathspec, the command succeeds, and you get default-formatted output that you then count or parse as if it were the format you asked for.
+**Presents as: BOTH ways, and the silent one is worse.** Loud form: an error naming your option or its argument as an unmatched path — true, but easily misread as a corrupted command line. Silent form: on a query command, a misplaced formatting option is accepted as a non-matching pathspec, the command succeeds, and you get default-formatted output that you then count or parse as if it were the format you asked for.
 
 **Detect:** Read the argument order, not the error text. If any option appears after `--`, that is the cause whatever the message says. For the silent form: check that the output actually *looks* like the format you requested before trusting anything derived from it.
 
@@ -515,7 +542,7 @@ Every entry here is one failure: **content corrupted as it crosses a shell bound
 
 ### E13. A freshly created linked worktree is not armed for anything that arms per worktree
 
-**What breaks:** Where a repository's local controls are armed by per-worktree state � a marker file in that worktree's own metadata directory � creating a new linked worktree produces one with none of them. The hooks themselves may be shared and present; the *arming* is not.
+**What breaks:** Where a repository's local controls are armed by per-worktree state — a marker file in that worktree's own metadata directory — creating a new linked worktree produces one with none of them. The hooks themselves may be shared and present; the *arming* is not.
 
 **Presents as: a wave of failures in exactly the tests that assert "this checkout is armed"**, in a run whose subject has nothing to do with arming. Read at face value it looks as though the change under test disarmed something.
 
@@ -531,7 +558,7 @@ Every entry here is one failure: **content corrupted as it crosses a shell bound
 
 **Detect:** List the stack and identify your entry by its own message before restoring anything. Never assume position.
 
-**Do instead:** Avoid stashing entirely where concurrent processes share a checkout � commit to a scratch branch instead, which is addressable by name. Where you must stash, restore by explicit entry reference rather than by popping the top.
+**Do instead:** Avoid stashing entirely where concurrent processes share a checkout — commit to a scratch branch instead, which is addressable by name. Where you must stash, restore by explicit entry reference rather than by popping the top.
 
 ### E15. Filtering a remote tag listing by name drops the peeled line
 
@@ -547,7 +574,7 @@ Every entry here is one failure: **content corrupted as it crosses a shell bound
 
 **What breaks:** Hooks usually live in two places: a tracked copy in the repository, and a deployed copy the runtime actually loads. Nothing inherently keeps them equal. Edit the tracked one and the deployed one keeps running; edit the deployed one and the tracked source stops describing reality.
 
-**Presents as: a control that reads as reviewed and is not.** The tracked file is in history, has a diff, and looks governed � while the bytes that actually fire are a different, unreviewed version.
+**Presents as: a control that reads as reviewed and is not.** The tracked file is in history, has a diff, and looks governed — while the bytes that actually fire are a different, unreviewed version.
 
 **Detect:** Compare the two copies byte for byte, in both directions: every tracked hook against its deployed copy, *and* every deployed hook against a tracked source. The second direction is the one usually skipped, and it is what finds a live hook with no tracked source at all.
 
@@ -565,7 +592,7 @@ Every entry here is one failure: **content corrupted as it crosses a shell bound
 
 ### E18. A history sweep across all refs includes the stash, so a "removed" object still appears reachable
 
-**What breaks:** Sweeping "all refs" for an object includes stash refs. Content removed from branches can still be reachable through a stash entry, so an exposure sweep reports it as present long after every branch stopped carrying it � or, read the other way, a sweep believed to cover everything is actually reporting a stash.
+**What breaks:** Sweeping "all refs" for an object includes stash refs. Content removed from branches can still be reachable through a stash entry, so an exposure sweep reports it as present long after every branch stopped carrying it — or, read the other way, a sweep believed to cover everything is actually reporting a stash.
 
 **Presents as: a confusing partial result.** The object is found, but not where you expect; commits that reference it belong to no branch you recognise, which reads as history corruption rather than as a stash.
 
@@ -575,9 +602,9 @@ Every entry here is one failure: **content corrupted as it crosses a shell bound
 
 ### E19. Another process's commit sweeps your uncommitted shared-file change in under its message
 
-**What breaks:** The commonly documented hazards run outbound � your write erasing someone's work, or your commit taking their unstaged hunk. This is the inbound direction: you correctly decline to commit a shared file because it also carries another process's work, that process commits the file first, and your change goes with it under *its* message.
+**What breaks:** The commonly documented hazards run outbound — your write erasing someone's work, or your commit taking their unstaged hunk. This is the inbound direction: you correctly decline to commit a shared file because it also carries another process's work, that process commits the file first, and your change goes with it under *its* message.
 
-**Presents as: SUCCESS � specifically, a clean working tree you did not produce.** Status goes empty, validation passes, and the content is published, so a process that checks status after deferring a commit reads the clean tree as its own commit having landed. Every ownership check then passes, correctly, because both parties' content is now identical to the committed state.
+**Presents as: SUCCESS — specifically, a clean working tree you did not produce.** Status goes empty, validation passes, and the content is published, so a process that checks status after deferring a commit reads the clean tree as its own commit having landed. Every ownership check then passes, correctly, because both parties' content is now identical to the committed state.
 
 **Detect:** Never infer that your commit landed from a clean tree. Read your intended commit back by its own message, or resolve the change by searching history for a string unique to it and confirming which commit carries it. A commit attempt that exits complaining there is nothing to commit is the positive signal.
 
@@ -585,7 +612,7 @@ Every entry here is one failure: **content corrupted as it crosses a shell bound
 
 ### E20. A green drift check proves the bytes and says nothing about whether anything loads them
 
-**What breaks:** A check that a deployed control matches its tracked source answers one question: are the bytes right. It does not answer whether the runtime is configured to invoke that file at all. A control can be tracked, deployed, byte-identical, covered by passing tests � and referenced by nothing.
+**What breaks:** A check that a deployed control matches its tracked source answers one question: are the bytes right. It does not answer whether the runtime is configured to invoke that file at all. A control can be tracked, deployed, byte-identical, covered by passing tests — and referenced by nothing.
 
 **Presents as: reassurance, which is what makes it expensive.** The drift check is green on every commit, the tests pass, and the control fires on no event whatsoever. Neither the pinning check nor the control's own tests can detect it: tests import the module and call it directly, which proves the logic and not the wiring.
 
@@ -651,7 +678,7 @@ Every entry here is one failure: **content corrupted as it crosses a shell bound
 
 **What breaks:** Writing a file in text mode translates newlines to the platform convention. A hash taken over the result therefore describes that platform's rendering, not the content. The same generator on another platform produces different bytes and a different hash.
 
-**Presents as: a pin that passes where it was created and fails everywhere else** � on a colleague's machine, in a container, in a fresh checkout � which reads as environment corruption rather than as a writer that was never deterministic.
+**Presents as: a pin that passes where it was created and fails everywhere else** — on a colleague's machine, in a container, in a fresh checkout — which reads as environment corruption rather than as a writer that was never deterministic.
 
 **Detect:** Write the file on two platforms, or once in text mode and once in binary with explicit newlines, and compare hashes. A difference confirms it.
 
@@ -661,7 +688,7 @@ Every entry here is one failure: **content corrupted as it crosses a shell bound
 
 **What breaks:** A producer that prints paths with platform line endings, piped into a consumer that splits on the newline character alone, leaves a stray carriage return at the end of every value. Each path then fails to match anything.
 
-**Presents as: SUCCESS with a plausible total and zero effect.** The consumer reports how many items it processed � the count is right, because it received the right number of lines � while every lookup silently missed. A count is exactly the wrong thing to check here, and it is the thing most callers check.
+**Presents as: SUCCESS with a plausible total and zero effect.** The consumer reports how many items it processed — the count is right, because it received the right number of lines — while every lookup silently missed. A count is exactly the wrong thing to check here, and it is the thing most callers check.
 
 **Detect:** Check one value's length or repr rather than the count. A trailing invisible character is obvious in a repr and invisible in a total.
 
@@ -693,11 +720,11 @@ Every entry here is one failure: **content corrupted as it crosses a shell bound
 
 ### G3. A fallback backup copy chooses its own destination, and the restore then looks in the wrong place
 
-**What breaks:** A backup helper that falls back to a different copying strategy when the first is unavailable can also fall back to a different *destination* � placing the copy inside a directory it created rather than at the path the caller named. The caller's later restore reads the named path, finds nothing, and proceeds as though there was no backup.
+**What breaks:** A backup helper that falls back to a different copying strategy when the first is unavailable can also fall back to a different *destination* — placing the copy inside a directory it created rather than at the path the caller named. The caller's later restore reads the named path, finds nothing, and proceeds as though there was no backup.
 
 **Presents as: SUCCESS at backup time and silence at restore time.** Both operations report success; the restore simply restores nothing. The data is intact on disk, one directory away, which means recovery is possible but only for someone who knows to look.
 
-**Detect:** After backing up, assert the artifact exists at the exact path you asked for � not merely that the operation returned success. Compare its size against the source.
+**Detect:** After backing up, assert the artifact exists at the exact path you asked for — not merely that the operation returned success. Compare its size against the source.
 
 **Do instead:** Verify the destination explicitly after every backup, and make the restore fail loudly when the expected artifact is absent rather than treating absence as "nothing to restore".
 
@@ -847,11 +874,11 @@ This section is to PowerShell what C is to Python: the language and its runtime,
 
 ## J. Toolchain availability: absent command, present capability
 
-### J1. No CLI does not mean no API � the credential is already on the machine
+### J1. No CLI does not mean no API — the credential is already on the machine
 
 **What breaks:** Concluding that an integration is unavailable because its command-line tool is not installed. The tool is one client. The service's HTTP interface is usually reachable directly, and a credential for it is frequently already present in the platform's credential store, placed there by some other tool that authenticated earlier.
 
-**Presents as: a confident, wrong "this cannot be done here".** The check that produced it � is the command on the path � is real, so the conclusion feels evidenced, and work gets planned around a limitation that does not exist.
+**Presents as: a confident, wrong "this cannot be done here".** The check that produced it — is the command on the path — is real, so the conclusion feels evidenced, and work gets planned around a limitation that does not exist.
 
 **Detect:** Distinguish *unsupported* from *unconfigured*, *logged out*, or *merely lacking one particular client*. Query the credential store and probe the service interface before concluding anything about capability.
 

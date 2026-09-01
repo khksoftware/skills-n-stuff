@@ -4,6 +4,43 @@ All notable changes to these skills are recorded here. Versions follow
 [Semantic Versioning](https://semver.org/), read against the skills as a
 published set rather than against any single file.
 
+## 2.4.0 — 2026-09-01
+
+### Added
+
+- **Twenty-six environment traps, every one met in real work rather than imagined.** They
+  span content assembly (`A6`—`A8`), long-running work (`B11`—`B13`), imports and
+  subprocess (`C4`—`C6`), test scope (`D7`—`D9`), git (`E11`—`E20`), line endings
+  under hash pinning (`F6`—`F7`), a detector that chooses its own destination (`G3`), and
+  a new section `J` on toolchain availability.
+
+  The largest group is git, and the two worth reading first are `E19` and `E20`. `E19` is
+  the INBOUND direction of a hazard usually documented only outbound: you correctly decline
+  to commit a shared file, another process commits it first and takes your change with it,
+  and your working tree goes clean without you having committed anything. `E20` is the
+  reassurance problem: a check proving a deployed control matches its tracked source says
+  nothing about whether anything loads it, and a control can be tracked, deployed,
+  byte-identical, covered by passing tests and referenced by nothing.
+
+  `J1` is the one most likely to change a decision: an absent command-line client says
+  nothing about whether the capability exists, and the credential is frequently already on
+  the machine.
+
+### Fixed
+
+- **Thirty-eight em dashes in the newly added entries had arrived as U+FFFD REPLACEMENT
+  CHARACTER, and the cause was not where it looked.** The natural suspicion is the write,
+  the read, or a line-ending pass. Measured: the source scripts already carried all
+  thirty-eight and carried zero surviving em dashes, so the corruption happened when those
+  scripts were AUTHORED and the write copied faithfully what it was handed.
+
+  It presented as success from both ends — the run exited zero with the right count, and
+  the output looked correct in a terminal that cannot render an em dash anyway. It was
+  visible only in a renderer, which is to say only to a person reading the published
+  result. That is now `A8`, together with the two defences that follow from it: prefer ASCII
+  in generated content, and where a non-ASCII character is genuinely required build it from
+  its codepoint so it never travels through the authoring path at all.
+
 ## 2.3.0 — 2026-08-27
 
 ### Added
