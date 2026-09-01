@@ -883,3 +883,30 @@ This section is to PowerShell what C is to Python: the language and its runtime,
 **Detect:** Distinguish *unsupported* from *unconfigured*, *logged out*, or *merely lacking one particular client*. Query the credential store and probe the service interface before concluding anything about capability.
 
 **Do instead:** Before declaring any platform, tool or runtime incapable of an operation, verify against current documentation and probe the installed surface plus its authentication state. Absence of a convenience wrapper says nothing about the capability underneath it.
+
+## K. Publishing and releases
+
+### K1. A release helper that hardcodes "make this the latest" demotes the current release when you backfill
+
+**What breaks:** Release-creation helpers commonly set the hosting platform's *latest* flag
+unconditionally, because they were written for the case they were needed in — publishing
+the newest version. Reuse one to backfill a historical release and it makes that old version
+the platform's latest, which is what the project's front page shows and what every
+"download the latest" link resolves to.
+
+**Presents as: SUCCESS at exactly the thing you asked for.** A release object IS created,
+the returned URL is correct, and a helper that re-fetches to verify still passes — because
+it verifies the release EXISTS, not which one is current. The damage is one field away and
+visible only on the repository's front page, so nothing in the run's own output can show it
+to you.
+
+**Detect:** After creating any release, fetch the platform's *latest release* endpoint and
+compare it against the version you intended to be current. That is a different question from
+"did my release get created", and it is the one nobody asks.
+
+**Do instead:** Use the newest-release helper only for the newest release. For a backfill,
+create the annotated tag yourself and post the release with the latest flag explicitly
+FALSE, then assert the current version is still current — an assertion rather than an
+assumption, because the failure cannot be seen in the creation response. And take the
+release body from the tag's own annotation or the changelog's own section, so the published
+notes and the repository's record cannot drift.

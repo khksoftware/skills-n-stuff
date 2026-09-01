@@ -4,6 +4,24 @@ All notable changes to these skills are recorded here. Versions follow
 [Semantic Versioning](https://semver.org/), read against the skills as a
 published set rather than against any single file.
 
+## 2.4.1 — 2026-09-01
+
+### Added
+
+- **`K1`, and a new section `K` for publishing.** A release helper that hardcodes the
+  platform's *latest* flag demotes the current release the moment it is reused to backfill
+  an older one. Found by reading such a helper before running it — the backfill it was
+  about to perform would have made a three-day-old version the latest, minutes after the
+  current one shipped.
+
+### Fixed
+
+- **The `v2.3.0` tag and release, which never existed.** The changelog recorded 2.3.0 as
+  shipped while the tags jumped from `v2.2.1` to `v2.4.0`, so the published release still
+  advertised an older version. A declared version and its own changelog had drifted apart
+  with nothing comparing them. Backfilled from the changelog's own 2.3.0 section, with the
+  latest release verified afterwards to still be the current one.
+
 ## 2.4.0 — 2026-09-01
 
 ### Added
