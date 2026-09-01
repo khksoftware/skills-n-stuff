@@ -140,6 +140,30 @@ asserting that one fixture carrying an undecodable byte IS caught by the byte-le
 NOT caught by the character scan. Without that test the two look duplicative, and the next
 tidying pass collapses them back to the blind one.
 
+### A10. Writing every batch request before reading responses can deadlock both pipes
+
+**What breaks:** A subprocess protocol that sends requests through the child's stdin and
+receives responses through stdout can deadlock when the parent writes the complete request
+population before reading the first response. Operating-system pipes have bounded buffers. The
+child can fill stdout with early responses and block before it resumes reading stdin, while the
+parent simultaneously blocks writing later requests into the child's full stdin pipe. Both
+processes remain alive, but neither can make progress.
+
+**Presents as:** A silent, scale-dependent hang. A small request population completes, while a
+larger one stops with no terminal output and little or no CPU activity. A process-liveness check
+can make this look like productive work because the child is still running.
+
+**Detect:** Inspect request/response ordering. An all-write-then-all-read client is vulnerable.
+Reproduce with a minimal population and a larger one: small Green plus a large silent hang is the
+characteristic bounded-buffer threshold. Confirm that the parent is blocked writing stdin while
+the child's stdout is not being drained; a timeout by itself does not identify this trap.
+
+**Do instead / remedy:** Interleave the protocol: write and flush one request, then read its
+complete framed response before writing the next. If multiple requests must be in flight, drain
+stdout and stderr concurrently with request production, or use a communicate-style primitive
+that owns both directions. Interrupt only the owned child, change the client, and rerun once.
+Increasing the timeout cannot repair a bounded-buffer deadlock.
+
 ## B. Long-running work: whether it is alive, whether it finished, and who is telling you
 
 ### B1. Piping a long run through `tail`/`head` loses it
