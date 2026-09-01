@@ -4,6 +4,22 @@ All notable changes to these skills are recorded here. Versions follow
 [Semantic Versioning](https://semver.org/), read against the skills as a
 published set rather than against any single file.
 
+## 2.6.0 — 2026-09-01
+
+### Added
+
+- **`A9`: a corruption scan that looks for the replacement character cannot see an undecodable
+  byte.** The two are different defects and only one of them is visible to the obvious check.
+  A stored byte that is not valid UTF-8 contains no U+FFFD, so a scan for that character
+  reports clean — and a passing control ends the question more effectively than no control
+  at all.
+
+  The measured case is the useful part: the scan that missed it had been built days earlier in
+  direct response to 38 real replacement characters, and was believed to cover this. It was
+  caught by a person reading the file. The entry carries the detection trap too, which is easy
+  to walk into while writing the fix: decoding with `errors="replace"` before checking destroys
+  the evidence by manufacturing the character being searched for.
+
 ## 2.5.0 — 2026-09-01
 
 ### Added

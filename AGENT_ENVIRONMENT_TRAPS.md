@@ -117,6 +117,29 @@ through the authoring path at all. And add a standing check that refuses a repla
 character in authored text: the symptom is exact, cheap to detect, and needs no knowledge of
 which pipeline mangled it.
 
+### A9. A corruption scan that looks for the replacement character cannot see an undecodable byte
+
+**What breaks:** Scanning for U+FFFD REPLACEMENT CHARACTER finds only corruption that has
+ALREADY been decoded once and substituted. A file storing a raw byte that is not valid UTF-8
+— a bare `0xA7` where the two-byte form was needed — contains no U+FFFD at all. Reading
+it with `errors="replace"` manufactures one at read time; reading with `errors="strict"`
+raises; and storing it leaves the bytes wrong while the character scan reports clean.
+
+**Presents as: A GREEN ARMED CHECK**, which is worse than having no check, because a passing
+control ends the question. Measured case: a corruption scan built days earlier in response to
+38 real replacement characters passed a file whose commit carried a bare `0xA7`. The scan was
+believed to cover exactly this. It was found by a person reading the file, not by the control.
+
+**Detect:** Read the bytes and decode with `errors="strict"`, catching the decode error and
+reporting the byte offset. **Do not decode with `errors="replace"` first** — that destroys
+the evidence by manufacturing the very character you are looking for. Skip binaries by testing
+for a NUL byte in the first kilobyte.
+
+**Do instead:** Run BOTH checks, and prove they are not redundant. The proof is a test
+asserting that one fixture carrying an undecodable byte IS caught by the byte-level scan and is
+NOT caught by the character scan. Without that test the two look duplicative, and the next
+tidying pass collapses them back to the blind one.
+
 ## B. Long-running work: whether it is alive, whether it finished, and who is telling you
 
 ### B1. Piping a long run through `tail`/`head` loses it
