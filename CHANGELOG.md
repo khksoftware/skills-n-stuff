@@ -4,6 +4,30 @@ All notable changes to these skills are recorded here. Versions follow
 [Semantic Versioning](https://semver.org/), read against the skills as a
 published set rather than against any single file.
 
+## 3.0.0 — 2026-09-08
+
+### Changed
+
+- **BREAKING: `prepare-compact` is now `precompact`, and `resume` is now `postcompact`.** The
+  skills are invoked by name, so anyone calling the old names must update. The directories, the
+  `name:` frontmatter, every cross-reference between the skills, and the install paths in
+  `README.md` all move together — `wrap-up` alone named the old skill nine times as the one to
+  invoke, and renaming the directory without those references would have shipped a set that
+  instructs you to call something that no longer exists.
+
+  Ordinary prose uses of the word "resume" are deliberately untouched, and the historical
+  changelog entries below still name the skills as they shipped at the time.
+
+### Added
+
+- **`A10`: writing every batch request before reading any response can deadlock both pipes.** A
+  subprocess protocol that sends all requests through the child's stdin before reading stdout
+  hangs when the response volume fills the OS pipe buffer — the child blocks writing, the parent
+  blocks writing, and neither drains the other. It presents as a silent, scale-dependent hang:
+  a small request population completes and a larger one never returns, which reads as a
+  performance problem rather than a protocol defect. The remedy is to interleave — write and
+  flush one request, then read its response — rather than to enlarge a buffer.
+
 ## 2.6.0 — 2026-09-01
 
 ### Added
