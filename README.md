@@ -2,7 +2,7 @@
 
 # Generic Compaction-Handling Skills and Other Useful Stuff
 
-Three portable Claude Code skills that protect a long-running chat session against the memory loss caused by context compaction: **`wrap-up`** (run first, to quiesce delegated work), **`prepare-compact`** (run before compacting) and **`resume`** (run after resuming, whether from a compaction or a fresh session picking up prior work).
+Three portable Claude Code skills that protect a long-running chat session against the memory loss caused by context compaction: **`wrap-up`** (run first, to quiesce delegated work), **`precompact`** (run before compacting) and **`postcompact`** (run after resuming, whether from a compaction or a fresh session picking up prior work).
 
 They are written to be project-agnostic — no hardcoded file paths, governance frameworks, or product names — so they can be dropped into any repository's `.claude/skills/` and adapt to whatever session-tracking conventions (or lack of them) that project already has.
 
@@ -13,23 +13,23 @@ A context compaction has the same practical effect on an agent as starting a fre
 - **On the way into compaction**: a delegated background agent can keep running with nothing left to check on it, because the session's own memory of having dispatched it doesn't survive compaction.
 - **On the way out of compaction**: the auto-generated summary can drop a detail a durable record actually preserved correctly — and a resumed session that trusts the summary (or a stale tracked-status field) over the durable record itself can redo or even duplicate work that was already done.
 
-`prepare-compact` and `resume` are the standing mitigations for these two failure modes, one on each side of the compaction boundary.
+`precompact` and `postcompact` are the standing mitigations for these two failure modes, one on each side of the compaction boundary.
 
-There is a third failure mode, upstream of both, and `wrap-up` exists for it. `prepare-compact` describes itself as a bookkeeping pass rather than an audit — which only holds if the state it transcribes has actually settled. Run straight into a session with agents still mid-mutation, it either understates what is live or stalls attempting audit-grade work it was never built for. `wrap-up` is the step that gets a session from *agents actively working* to the quiescent state `prepare-compact` is entitled to assume.
+There is a third failure mode, upstream of both, and `wrap-up` exists for it. `precompact` describes itself as a bookkeeping pass rather than an audit — which only holds if the state it transcribes has actually settled. Run straight into a session with agents still mid-mutation, it either understates what is live or stalls attempting audit-grade work it was never built for. `wrap-up` is the step that gets a session from *agents actively working* to the quiescent state `precompact` is entitled to assume.
 
 ## What each skill does
 
 ### `wrap-up/SKILL.md`
 
-Run before `prepare-compact` whenever anything has been delegated. It is a **coordination pass, not a shutdown** — its job is to bring every live agent to a deliberate, self-reported stopping point, not to kill processes or force anything to stop mid-step. An agent partway through a multi-file edit has not reached a logical pause point merely because it stopped emitting output. It covers:
+Run before `precompact` whenever anything has been delegated. It is a **coordination pass, not a shutdown** — its job is to bring every live agent to a deliberate, self-reported stopping point, not to kill processes or force anything to stop mid-step. An agent partway through a multi-file edit has not reached a logical pause point merely because it stopped emitting output. It covers:
 
 1. Identifying every outstanding agent and in-flight task fresh, from the environment rather than from this session's memory of what it dispatched — a task can outlive the turn that launched it.
 2. Messaging each one to finish its current atomic unit, durably record anything genuinely finished, and report a clean stopping point: what it finished, what it deliberately left, and what the next step is on resumption.
 3. Handling agents that cannot pause quickly as a **documented exception** rather than a forced interruption at an unsafe point.
 4. Updating task tracking to reflect reality rather than aspiration — paused work marked paused, with the agent's own account of where it stopped.
-5. Verifying it is actually safe to hand off before invoking `prepare-compact`, including that an empty roster was *checked* rather than merely assumed. Those are different facts, and collapsing them lets "nobody looked" read as "nothing is running".
+5. Verifying it is actually safe to hand off before invoking `precompact`, including that an empty roster was *checked* rather than merely assumed. Those are different facts, and collapsing them lets "nobody looked" read as "nothing is running".
 
-### `prepare-compact/SKILL.md`
+### `precompact/SKILL.md`
 
 Run immediately before compacting a session that has anything genuinely at stake — delegated background agents, uncommitted work-in-progress, or a freshly agreed plan not yet executed. It walks through:
 
@@ -43,7 +43,7 @@ Run immediately before compacting a session that has anything genuinely at stake
 
 Every step degrades gracefully when a project doesn't have some piece of this machinery (no session record, no handover generator) rather than assuming it must exist.
 
-### `resume/SKILL.md`
+### `postcompact/SKILL.md`
 
 The symmetric counterpart, run right after a compaction or at the start of a session continuing prior work. It is a **state-recovery pass, not a fresh investigation** — its job is to reconstruct accurate context from durable artifacts that already exist, not to re-derive conclusions they already recorded or re-audit already-verified work:
 
@@ -98,15 +98,15 @@ python <path-to-this-folder>/sync_into_repo.py --target <repo-root>
 This regenerates, under `<repo-root>`:
 
 ```text
-<repo-root>/.claude/skills/prepare-compact/
-<repo-root>/.claude/skills/resume/
-<repo-root>/.agents/skills/prepare-compact/
-<repo-root>/.agents/skills/resume/
+<repo-root>/.claude/skills/precompact/
+<repo-root>/.claude/skills/postcompact/
+<repo-root>/.agents/skills/precompact/
+<repo-root>/.agents/skills/postcompact/
 ```
 
 Pass `--target` more than once to sync several repositories in one run, and add `--check` to preview what would change without writing anything — useful before a real run, or in CI to catch drift.
 
-For each skill and each destination, the script first attempts a real OS symlink back to this folder's own copy, so an edit made here is reflected in the target immediately with nothing further to run. If the operating system or filesystem doesn't permit symlinks (for example, Windows without administrator rights or Developer Mode enabled), the script transparently falls back to a recursive copy instead. A copy is a snapshot, not a live view — it will not pick up later edits on its own, so re-run the script after changing `prepare-compact/SKILL.md` or `resume/SKILL.md` here to refresh any copy-mode destinations. The script's report states which mode (`symlink` or `copy`) was actually used for each entry, a run with nothing left to do writes nothing further, and any skill this folder used to publish but no longer does gets cleaned up from a target's `.claude/skills/` and `.agents/skills/` on the next real run, without touching anything else already present there.
+For each skill and each destination, the script first attempts a real OS symlink back to this folder's own copy, so an edit made here is reflected in the target immediately with nothing further to run. If the operating system or filesystem doesn't permit symlinks (for example, Windows without administrator rights or Developer Mode enabled), the script transparently falls back to a recursive copy instead. A copy is a snapshot, not a live view — it will not pick up later edits on its own, so re-run the script after changing `precompact/SKILL.md` or `postcompact/SKILL.md` here to refresh any copy-mode destinations. The script's report states which mode (`symlink` or `copy`) was actually used for each entry, a run with nothing left to do writes nothing further, and any skill this folder used to publish but no longer does gets cleaned up from a target's `.claude/skills/` and `.agents/skills/` on the next real run, without touching anything else already present there.
 
 `.claude/` and `.agents/` are commonly gitignored in a consuming repository, so synced copies placed there are not necessarily durable or version-controlled on their own — this folder remains the durable, version-controlled source of truth; treat everything `sync_into_repo.py` writes elsewhere as disposable, regenerable output.
 

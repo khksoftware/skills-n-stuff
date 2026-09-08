@@ -1,11 +1,11 @@
 ---
 name: wrap-up
-description: Bring a chat session's live delegated agents and in-flight task tracking to a genuine logical pause point before preparing for a context compaction, so no agent is cut off mid-mutation and no task's in-flight/done boundary becomes ambiguous. Use whenever the session has delegated background agents or active task tracking and a compaction may be coming soon — run this before `prepare-compact`, not instead of it.
+description: Bring a chat session's live delegated agents and in-flight task tracking to a genuine logical pause point before preparing for a context compaction, so no agent is cut off mid-mutation and no task's in-flight/done boundary becomes ambiguous. Use whenever the session has delegated background agents or active task tracking and a compaction may be coming soon — run this before `precompact`, not instead of it.
 ---
 
 # Wrap up
 
-`prepare-compact` describes itself as a bookkeeping pass, not an audit — its job is to transcribe state the session already established into durable files. That description only holds if the state is actually settled by the time it runs: no agent still mid-mutation, no task whose in-flight/done boundary is ambiguous. A session running several delegated background agents at once, each carrying its own in-progress reasoning and uncommitted intent, breaks that assumption — a transcription pass has no safe way to summarize work that hasn't reached a stopping point yet. Running `prepare-compact` straight into that state means it either silently understates what's actually live, or stalls trying to do audit-grade work it isn't built for. `wrap-up` exists to get a session from "agents actively working" to the quiescent state `prepare-compact` is entitled to assume. It is preparatory to that skill, not a substitute for any of its steps.
+`precompact` describes itself as a bookkeeping pass, not an audit — its job is to transcribe state the session already established into durable files. That description only holds if the state is actually settled by the time it runs: no agent still mid-mutation, no task whose in-flight/done boundary is ambiguous. A session running several delegated background agents at once, each carrying its own in-progress reasoning and uncommitted intent, breaks that assumption — a transcription pass has no safe way to summarize work that hasn't reached a stopping point yet. Running `precompact` straight into that state means it either silently understates what's actually live, or stalls trying to do audit-grade work it isn't built for. `wrap-up` exists to get a session from "agents actively working" to the quiescent state `precompact` is entitled to assume. It is preparatory to that skill, not a substitute for any of its steps.
 
 Do not run this skill's steps from memory of what it says below once invoked in a future session — re-read this file fresh each time.
 
@@ -46,23 +46,23 @@ Once every live agent has either reached a reported pause point (step 2) or is a
 - Anything an agent reported as deliberately left mid-flight should be marked paused/in-progress, carrying the agent's own account of what's done versus what's left — never silently reset to "not started," never left claiming a state that's no longer accurate.
 - The result should be resumable later without ambiguity: a fresh reader of the tracking state alone, with no memory of this conversation, should be able to tell exactly what finished, what paused and where, and what the very next action is for each paused item.
 
-## 5. Verify it is actually safe before handing off to `prepare-compact`
+## 5. Verify it is actually safe before handing off to `precompact`
 
-Before invoking `prepare-compact`, confirm:
+Before invoking `precompact`, confirm:
 
 - No agent identified in step 1 is still mid-mutation — each is either fully stopped at a reported pause point, or is a step-3 exception whose bounded unit has since completed.
 - No dangling lease, lock, or held resource remains that an abrupt stop would have left corrupted or contended.
 - The task tracking updated in step 4 accurately reflects what every agent actually reported, not a guess at what it probably did.
-- Every agent's authorization disclosure from step 2 is explicit, not assumed — an agent that never stated one hasn't been asked, so go ask, rather than recording an assumed "no." If any answer is yes, carry that forward plainly, since `prepare-compact`'s own reporting step depends on it.
+- Every agent's authorization disclosure from step 2 is explicit, not assumed — an agent that never stated one hasn't been asked, so go ask, rather than recording an assumed "no." If any answer is yes, carry that forward plainly, since `precompact`'s own reporting step depends on it.
 - If this project distinguishes a verified-empty roster of live agents from one that simply couldn't be checked, don't collapse the two into each other — "nobody looked" is not the same claim as "nothing is running," and treating them as interchangeable is the exact false comfort this step exists to prevent.
 
 If any of these isn't true yet, this skill isn't done — wait, re-message the outstanding agent, or surface the blocker to the user per step 3, rather than proceeding anyway.
 
-## 6. Invoke `prepare-compact`
+## 6. Invoke `precompact`
 
-Once step 5 is confirmed, invoke the `prepare-compact` skill. Its own first step re-checks for live agents and dirty state as a cheap freshness check — that's expected and correct, a fast confirmation that this skill's work actually held, not a duplicate audit. `wrap-up`'s job ends here: don't perform any of `prepare-compact`'s own steps from within this skill.
+Once step 5 is confirmed, invoke the `precompact` skill. Its own first step re-checks for live agents and dirty state as a cheap freshness check — that's expected and correct, a fast confirmation that this skill's work actually held, not a duplicate audit. `wrap-up`'s job ends here: don't perform any of `precompact`'s own steps from within this skill.
 
-**Where the line falls between the two skills.** This skill's write scope is narrow: if this project keeps a durable record of delegated-agent activity as part of its session state, step 2 above is what produces those entries, and nothing downstream reconstructs them if they go missing. Everything else in that session record — the narrative of current state, the next-action pointer, standing boundaries, an agreed plan — belongs to `prepare-compact`. Write the delegated-agent entries; leave the rest to the skill that owns it.
+**Where the line falls between the two skills.** This skill's write scope is narrow: if this project keeps a durable record of delegated-agent activity as part of its session state, step 2 above is what produces those entries, and nothing downstream reconstructs them if they go missing. Everything else in that session record — the narrative of current state, the next-action pointer, standing boundaries, an agreed plan — belongs to `precompact`. Write the delegated-agent entries; leave the rest to the skill that owns it.
 
 ## Note on location
 

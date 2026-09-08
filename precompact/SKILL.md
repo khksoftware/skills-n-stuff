@@ -1,9 +1,9 @@
 ---
-name: prepare-compact
+name: precompact
 description: Prepare this chat session for a context compaction (/compact) so no in-flight work, agreed plan, or supervision state is lost. Use immediately before compacting a long-running session, especially one that has delegated background agents, uncommitted work-in-progress, or a freshly agreed multi-step plan not yet executed.
 ---
 
-# Prepare for compaction
+# Precompact
 
 A context compaction has the same practical effect on this agent as starting a fresh chat: everything not written to a durable artifact is reduced to a condensed summary, and any live handle to a background process is gone unless it is independently re-derivable from repository state. Losing track of a delegated background agent this way is a known, generally-observed failure mode of compaction, not a hypothetical edge case — a task can keep running with no one checking on it until the user has to ask directly. Treat this skill as the standing mitigation for that risk, not a one-off cleanup.
 
@@ -92,8 +92,8 @@ Only after this should compaction actually proceed.
 
 Install this skill in **one** of two places:
 
-- **Personal — `~/.claude/skills/prepare-compact/SKILL.md`.** Available in every project on the machine, so a single install covers all of them: nothing to copy, nothing to keep in step. The entry may be a symlink to a directory elsewhere on disk — Claude Code follows it, and loads the skill once even when the same target is reachable from more than one location.
-- **Project — `<repo>/.claude/skills/prepare-compact/SKILL.md`.** Scoped to that repository and committable with it, which is what you want when the skill should travel with the project rather than with the person. Where both exist the personal one wins: precedence runs enterprise, then personal, then project.
+- **Personal — `~/.claude/skills/precompact/SKILL.md`.** Available in every project on the machine, so a single install covers all of them: nothing to copy, nothing to keep in step. The entry may be a symlink to a directory elsewhere on disk — Claude Code follows it, and loads the skill once even when the same target is reachable from more than one location.
+- **Project — `<repo>/.claude/skills/precompact/SKILL.md`.** Scoped to that repository and committable with it, which is what you want when the skill should travel with the project rather than with the person. Where both exist the personal one wins: precedence runs enterprise, then personal, then project.
 
 **Corrected 2026-08-25, and stated plainly because the previous version of this note cost adopters real work.** It said the file *must* live under the primary working directory's `.claude/skills/`, that additional working directories were not scanned, and that you should therefore keep a copy in every repository and update them all whenever this file changed. **A personal install covers every project; a `.claude/skills/` inside a directory added with `--add-dir` _is_ loaded; and there is no fan-out to maintain.**
 
@@ -101,4 +101,4 @@ Install this skill in **one** of two places:
 
 **The one real limit on the personal install:** Cowork sessions, cloud sessions and routines do not read `~/.claude/skills/` from your machine. If the skill has to work in those, commit it to the repository's `.claude/skills/` or ship it in a plugin.
 
-Codex discovers the same file under `.agents/skills/prepare-compact/SKILL.md`, plus a personal `$HOME/.agents/skills/`, by the same walk-up convention. Its reload behaviour is not covered by any of the above — assume a fresh session there unless you have checked.
+Codex discovers the same file under `.agents/skills/precompact/SKILL.md`, plus a personal `$HOME/.agents/skills/`, by the same walk-up convention. Its reload behaviour is not covered by any of the above — assume a fresh session there unless you have checked.

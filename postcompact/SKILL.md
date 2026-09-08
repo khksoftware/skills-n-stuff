@@ -1,11 +1,11 @@
 ---
-name: resume
+name: postcompact
 description: Resume a chat session after a context compaction or other memory-losing interruption, so nothing durable gets missed or trusted from a lossy summary. Use immediately after a compaction (manual or automatic), at the start of a session continuing prior work, or any time you suspect the conversation's own memory of session state may be stale or incomplete.
 ---
 
-# Resume
+# Postcompact
 
-The symmetric counterpart to `prepare-compact`. That skill exists because a compaction has the same practical effect as starting a fresh chat: everything not written to a durable artifact is reduced to a condensed summary. This skill exists because the summary side of that exchange is a known, generally-observed failure mode, not a hypothetical edge case: a durable session record can correctly capture that some piece of work genuinely completed, while the auto-generated compaction summary drops that detail anyway — and a resumed session that trusts the summary (or a separately-tracked status field that was never reconciled against the record) over the durable record itself can end up redoing, or worse duplicating, work that was already done. Treat this skill as the standing mitigation for that risk on the resume side, the same way `prepare-compact` is the standing mitigation on the departure side.
+The symmetric counterpart to `precompact`. That skill exists because a compaction has the same practical effect as starting a fresh chat: everything not written to a durable artifact is reduced to a condensed summary. This skill exists because the summary side of that exchange is a known, generally-observed failure mode, not a hypothetical edge case: a durable session record can correctly capture that some piece of work genuinely completed, while the auto-generated compaction summary drops that detail anyway — and a resumed session that trusts the summary (or a separately-tracked status field that was never reconciled against the record) over the durable record itself can end up redoing, or worse duplicating, work that was already done. Treat this skill as the standing mitigation for that risk on the resume side, the same way `precompact` is the standing mitigation on the departure side.
 
 **A compaction does not make this a different session.** Its identity survives, and so does everything already written down under that identity — what's lost is only what was never written down, or what's remembered without having been. Keep those apart: what you can personally still recall of the conversation is never the test in any step below, only what the durable record and the repository can actually show.
 
@@ -65,8 +65,8 @@ Tell the user, in plain terms, what the durable records actually show now that t
 
 Install this skill in **one** of two places:
 
-- **Personal — `~/.claude/skills/resume/SKILL.md`.** Available in every project on the machine, so a single install covers all of them: nothing to copy, nothing to keep in step. The entry may be a symlink to a directory elsewhere on disk — Claude Code follows it, and loads the skill once even when the same target is reachable from more than one location.
-- **Project — `<repo>/.claude/skills/resume/SKILL.md`.** Scoped to that repository and committable with it, which is what you want when the skill should travel with the project rather than with the person. Where both exist the personal one wins: precedence runs enterprise, then personal, then project.
+- **Personal — `~/.claude/skills/postcompact/SKILL.md`.** Available in every project on the machine, so a single install covers all of them: nothing to copy, nothing to keep in step. The entry may be a symlink to a directory elsewhere on disk — Claude Code follows it, and loads the skill once even when the same target is reachable from more than one location.
+- **Project — `<repo>/.claude/skills/postcompact/SKILL.md`.** Scoped to that repository and committable with it, which is what you want when the skill should travel with the project rather than with the person. Where both exist the personal one wins: precedence runs enterprise, then personal, then project.
 
 **Corrected 2026-08-25, and stated plainly because the previous version of this note cost adopters real work.** It said the file *must* live under the primary working directory's `.claude/skills/`, that additional working directories were not scanned, and that you should therefore keep a copy in every repository and update them all whenever this file changed. **A personal install covers every project; a `.claude/skills/` inside a directory added with `--add-dir` _is_ loaded; and there is no fan-out to maintain.**
 
@@ -74,6 +74,6 @@ Install this skill in **one** of two places:
 
 **The one real limit on the personal install:** Cowork sessions, cloud sessions and routines do not read `~/.claude/skills/` from your machine. If the skill has to work in those, commit it to the repository's `.claude/skills/` or ship it in a plugin.
 
-Codex discovers the same file under `.agents/skills/resume/SKILL.md`, plus a personal `$HOME/.agents/skills/`, by the same walk-up convention. Its reload behaviour is not covered by any of the above — assume a fresh session there unless you have checked.
+Codex discovers the same file under `.agents/skills/postcompact/SKILL.md`, plus a personal `$HOME/.agents/skills/`, by the same walk-up convention. Its reload behaviour is not covered by any of the above — assume a fresh session there unless you have checked.
 
 If a given project also maintains a project-specific, non-generic variant of this skill (naming its own concrete files, governance documents, and incident history), that variant is the one to actually invoke and keep current for that project — this generic version is the portable baseline to adapt from, not a replacement for a project's own tailored copy where one already exists.
