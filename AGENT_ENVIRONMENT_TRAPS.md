@@ -164,6 +164,18 @@ stdout and stderr concurrently with request production, or use a communicate-sty
 that owns both directions. Interrupt only the owned child, change the client, and rerun once.
 Increasing the timeout cannot repair a bounded-buffer deadlock.
 
+### A11. A delimiter the payload may contain round-trips byte-identically while changing the value
+
+**What breaks:** A renderer and a parser can agree on a delimiter without agreeing on whether the payload may contain it. They then round-trip *perfectly at the byte level* while corrupting the value. A list joined on `", "` and split on `","` re-renders byte-identically from the split fragments, so a check comparing rendered text against rendered text passes on a value whose item count has already changed. Measured: a declared list of three items parsed as four, and the canonical-form check raised nothing.
+
+**Presents as: SUCCESS.** Nothing is refused and nothing is logged, and every round-trip check on the surface agrees. The corrupted value is well-formed; it is simply a different value from the one written, and downstream it reads as authored intent. Where a sibling check does refuse a different character in the same field, the refusal misdirects: the operator repairs that character, the delimiter case survives, and the surviving corruption now looks vetted.
+
+**Detect:** Compare the *parsed* value against the *input* value. Never compare rendered text against rendered text, and never the parsed value against a re-render of itself, which is the fixed point this trap lives inside. For a sequence, compare the length first: a delimiter inside one member changes the count, and the count survives every kind of member content.
+
+**Do instead:** Refuse the delimiter in the payload at render time, or escape it and prove the escape with a parsed-to-input round trip. Refusing is stronger where the author can simply rephrase; escaping is right where the payload is data nobody controls. A form in which the delimiter cannot appear by construction (one item per line, or length-prefixed items) removes the class rather than detecting it.
+
+**Remedy:** Re-derive an already-corrupted value from its input, not from the stored rendering, which is self-consistent and carries no evidence of the loss. Add the parsed-to-input comparison at the render site before repairing any single instance: a surface with this shape has been corrupting for as long as it has existed, and the instance you found says nothing about the population.
+
 ## B. Long-running work: whether it is alive, whether it finished, and who is telling you
 
 ### B1. Piping a long run through `tail`/`head` loses it
@@ -304,6 +316,18 @@ Increasing the timeout cannot repair a bounded-buffer deadlock.
 
 **Do instead:** Never derive a count from raw line or occurrence totals in a transcript. Extract identities first, deduplicate, then count — and when you publish the number, say which identity you deduplicated on, because a different choice produces a different number.
 
+### B14. A background task that hits the harness timeout ends its wrapper and leaves the child running
+
+**What breaks:** When an agent runtime's background task reaches its timeout, the runtime ends the *wrapper* process it launched, not the process tree under it. The child the command started keeps running, and nothing kills it. The notification carries the wrapper's exit status (see D6), so the agent that started the run records, sincerely and wrongly, that its run was killed at the timeout.
+
+**Presents as: nothing at all, which is the whole problem.** The agent reports a clean finish, its commits land, its progress record is final and its dispatch closes normally. None of those surfaces can see a detached child. Only the runtime's own background-task view and the operating system's process table can, and nothing reads either on a schedule. In the measured case a runaway process was noticed by a human in the runtime's task panel roughly ten and a half hours after the agent that started it had reported done.
+
+**Detect:** After any background run that timed out, read the process table, and read *accumulated* CPU time across two observations a few minutes apart rather than one sample. A single-threaded process gaining more than a second of CPU per wall-second is spinning, not working. Name-matched process probes are unreliable (B4); on Windows, `Get-CimInstance Win32_Process` returns the full command line, which settles what a process actually is.
+
+**Do instead:** Treat a timed-out background run as *unresolved*, not stopped, and resolve it from the process table before closing out the agent that started it. Where a roster probe says something in an agent's tree is alive while the agent itself has stopped, both readings are right: the disagreement is the signal to go looking for a child.
+
+**Remedy:** Stop the identified process by id once its command line has told you what it is. Then ask why it did not end on its own. A script written to *demonstrate* a defect is executable code and inherits every hazard of that defect; in the measured case it did not compute a wrong answer, it never terminated.
+
 ## C. Python and subprocess
 
 ### C1. A stale or wrong virtual environment produces a wave of fictitious failures
@@ -367,6 +391,18 @@ Increasing the timeout cannot repair a bounded-buffer deadlock.
 **Detect:** Print the imported module's file location and compare it against the checkout you are actually in. They should share a root; when they do not, that is the whole bug.
 
 **Do instead:** Make the path explicit — insert your own checkout's source root at the front of the path before importing — and assert the resolved location matches your working directory. Do this in any tool that can run from more than one checkout.
+
+### C7. A fixture that records `sys.executable` passes only under the interpreter production hardcodes
+
+**What breaks:** A test fixture records `sys.executable` as the interpreter a production check must accept, while the production code builds its own fixed interpreter path, such as a project virtual environment's `python`. The comparison can only succeed when the test process itself runs under that exact interpreter. Run the suite under any other interpreter, including a deliberately chosen system one, and the cases fail; run them in a checkout where the virtual environment does not exist and they fail there too.
+
+**Presents as:** an identity mismatch that reads like a real regression, **or as SUCCESS that depends on who launched the test runner.** Measured: eight cases failed under the system interpreter, passed eight of eight under the virtual environment's, and failed in every fresh checkout. The green direction is the dangerous one, because the pass is a property of the launch command rather than of the code.
+
+**Detect:** Look for `sys.executable` in the failing case's fixture and for a composed interpreter path (a virtual environment directory joined to `Scripts/python.exe` or `bin/python`) on the production path it exercises. If one side reads the running interpreter and the other constructs a fixed one, run the case under both: a verdict that flips with the interpreter is this trap.
+
+**Do instead:** Do not make the cases pass by running the suite under the interpreter production hardcodes. That buys a green that proves nothing about the environment you meant to test. Until the seam below exists, report the cases as not evaluated, with this reason, and never as passed.
+
+**Remedy:** Resolve the canonical interpreter in exactly one production function, and have tests replace that function with `sys.executable`, the way any other environment seam is replaced. Production behaviour stays byte-identical, and the cases then run under any interpreter.
 
 ## D. pytest and test collection scope
 
@@ -699,6 +735,40 @@ one.
 **Detect:** Read the runtime's own configuration and confirm it references the deployed copy. That is a third question, separate from "does a tracked source exist" and "does the deployed copy match it", and it is the one nothing else answers.
 
 **Do instead:** State all three conditions separately whenever you report a control's status, and treat arming as its own act with its own evidence rather than as a consequence of the first two.
+
+### E21. A lock file left by a dead process blocks every writer, and "wait and retry" can never clear it
+
+**What breaks:** Git serialises index writes with `.git/index.lock`. The standard advice for "Unable to create index.lock: File exists" is to wait and retry, and never delete the file, because a live process may hold it. That advice is correct for a live holder and cannot work for a *dead* one: the retry meets the same stale file forever. In a checkout several agents or processes share, the index is shared too, so all of them are blocked behind one dead holder. A holder dying mid-operation is not hypothetical; an agent killed by a rate limit or a timeout while touching the index produces exactly this.
+
+**Presents as: an indefinite, silent block that looks like contention.** The message is the same one a genuinely concurrent write produces, so the right response to the common case (wait) is indistinguishable from the failing response to this one. Elapsed time does not separate them either: a long legitimate operation and a dead holder look identical, and "it has been a while" is precisely the reasoning that destroys a live process's staged work.
+
+**Detect:** Establish death by *evidence*, never by elapsed time, and require independent readings to agree: whatever records your dispatched workers names none that could hold the lock (a quiet one still counts as a candidate); the runtime's own roster reports no live agent that could; and the process table shows no `git` process in that checkout, corroborated by a second observation, since name-matched probes miss processes (B4). Any one reading saying "maybe" means wait. The readings are an AND on purpose: a false "dead" costs someone else's work, and a false "alive" costs only more waiting.
+
+**Do instead:** Wait. That is the whole answer except for a proven orphan. Never automate the removal: a mechanism clearing locks on a schedule cannot make the live-or-dead distinction that is the entire content of the decision.
+
+**Remedy:** Only when every reading agrees: delete that one lock file by name and nothing else, re-verify `HEAD` and your own staged set before touching the index, and record which lock you cleared and which readings established the orphan.
+
+### E22. A fresh checkout has the tracked directory but not the ignored runtime file a test reads inside it
+
+**What breaks:** A new worktree or clone contains only *tracked* files. When a tracked directory also holds a gitignored, generated file at runtime (a database, a cache, a virtual environment), a test that reads that file finds the directory present and the file absent, and fails. Run the same test in the long-lived working copy, where the generated file exists, and it passes.
+
+**Presents as:** a normal-looking test failure in a throwaway-checkout validation run, **indistinguishable from a real regression** unless the same test is re-run against an earlier commit in an equally fresh checkout. The directory's presence is what makes it hard to see: nothing looks missing. Where several agents validate in fresh checkouts, each one has to re-derive independently that the failure predates its change.
+
+**Detect:** `git ls-files <the path the test reads>` returns nothing while the file exists in the working copy you normally use. In general, a test is exposed whenever `git ls-files <path>` is empty and `git ls-files <its parent>` is not.
+
+**Do instead:** Do not commit the generated file to satisfy the test; that puts mutating runtime state under version control. Either run that one test against the long-lived working copy, bracketed by `git status --porcelain` before and after so any write it makes is visible, or give the test a fixture it can build. Record which tests need which runtime file, so a fresh-checkout run can relocate exactly those instead of re-discovering them.
+
+### E23. A linked worktree's `.git` file is hidden on Windows, so a truncating write to it is refused
+
+**What breaks:** On Windows, Git marks a linked worktree's `.git` file (the one-line pointer to its administrative directory) with the hidden attribute. Opening an existing hidden file with truncate-and-recreate semantics is refused. `Path.write_bytes`, `Path.write_text` and `open(path, "wb")` against that file all raise `PermissionError`, on the first attempt, while reading the file and opening it `r+b` both work.
+
+**Presents as: a permissions problem that is not one.** `PermissionError: [Errno 13] Permission denied` on a file the same process has just read, in a directory it created, reproducibly and never intermittently. The natural readings (a lock, an antivirus hold, a read-only flag) are all wrong, and a retry loop built on any of them never succeeds. Measured with Git 2.52 on Windows: the attributes read `0x22` (archive and hidden), the truncating write was refused, and the in-place write below succeeded with the content intact.
+
+**Detect:** `ctypes.windll.kernel32.GetFileAttributesW(path) & 2` is non-zero for the `.git` file, and the refusal names that file. The same write against an ordinary file in the same directory succeeds.
+
+**Do instead:** Avoid rewriting a linked worktree's `.git` file at all; `git worktree` owns it. Where a test must corrupt and then restore it deliberately, write in place and restore the original bytes in a `finally`.
+
+**Remedy:** `with open(path, "r+b") as handle: handle.seek(0); handle.write(data); handle.truncate()`
 
 ## F. Content-hash pinning and line endings
 
