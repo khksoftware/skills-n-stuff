@@ -531,6 +531,35 @@ conventional name will not know why it is wrong. Note that a repository-root con
 CANNOT rescue this: the runner stops at the FIRST anchor going up, which is always the nearer
 one.
 
+### D11. Concurrent isolated runs race on the shared parent directory each one tidies up
+
+**What breaks:** A harness that gives every run its own directory under one shared parent, and
+removes that parent once it is empty, performs three unsynchronised steps -- does the parent
+exist, is it empty, remove it -- while every sibling run is performing them too. Two runs
+finishing close together interleave in two ways, and both are real: the parent can disappear
+between the listing being asked for and performed, and a sibling can create its own directory
+between the listing and the removal, which then fails because the parent is no longer empty.
+
+**Presents as:** A crashed run with NO RESULT AT ALL, raised after the real work finished and
+after the run's own directory was already removed successfully. The error names the shared
+parent -- a "cannot find the path" on listing it, or a "directory is not empty" on removing it
+-- so it reads as an environment hiccup rather than as a defect, and the natural response is to
+rerun. It occurs only under concurrency and never sequentially, so a single rerun always
+"fixes" it and the cause is never looked for.
+
+**Detect:** The last frame of the traceback is in cleanup or teardown rather than in the work;
+the failing path is the shared parent rather than the run's own directory; the wrapper exits
+nonzero while the run's own result code is absent entirely; and a sequential rerun of the same
+command passes every time. Measured on one such harness: one crash in ten runs at three-way
+concurrency, and zero in ten sequential runs of the same work.
+
+**Do instead:** Treat removing a shared parent as best-effort. Attempt it and swallow every
+operating-system error it raises. Each of them means only that the parent is not yours to
+remove at this moment, and none of them says anything about your own directory, whose removal
+you should already have proved by a postcondition. Tolerating only the "already gone" case is
+not enough: the not-empty case crashes the same finished run, and it is the one a reader does
+not predict.
+
 ## E. Git: history, worktrees, hooks, staging
 
 ### E1. `git rev-list --all` under-reports a repository whose history was rewritten
