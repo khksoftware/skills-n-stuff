@@ -328,6 +328,18 @@ Increasing the timeout cannot repair a bounded-buffer deadlock.
 
 **Remedy:** Stop the identified process by id once its command line has told you what it is. Then ask why it did not end on its own. A script written to *demonstrate* a defect is executable code and inherits every hazard of that defect; in the measured case it did not compute a wrong answer, it never terminated.
 
+### B15. A blanket process kill is a cross-stream act, and the run it destroys reports as a failure
+
+**What breaks:** Killing by interpreter name -- `Get-Process python | Stop-Process`, `pkill -f python`, `taskkill /IM python.exe` -- terminates every process of that interpreter on the machine, not the one you meant. Where concurrent streams or delegated agents share a machine, the processes you cannot see are the ones that matter: another stream's detached validation batch, a supervisor, a long data run. The killed run does not announce that it was killed; it leaves what a genuine failure leaves, so its owner reads a destroyed run as a broken one and starts debugging code that is fine.
+
+**Presents as: a run that ends with no verdict and looks like a defect.** In the measured case a detached validation batch of 834 modules returned zero tests run with a non-zero status -- indistinguishable, at the harness boundary, from a collection error or an environment fault. The owner could not attribute it, because the kill happened in a different agent's transcript. It was recoverable only because that agent volunteered the kill in its own report, including that it could not certify what it had destroyed.
+
+**Detect:** Before any kill, enumerate the candidates and read what each one actually *is*. On Windows, `Get-CimInstance Win32_Process` returns the full command line, which is the only field that separates your runaway from someone else's working run; a name match separates nothing (see B4). Afterwards, treat an empty summary or a zero-work tally from a long run as *unresolved* rather than failed, and ask whether anything else was killed in that window before believing the number.
+
+**Do instead:** Kill by process id, and only once its command line has told you what it is. Where a process cannot be identified, leave it and report it -- an unexplained process costs some memory; a blanket kill costs another stream its hours, with no notice given.
+
+**Remedy, and it is the part the killer controls:** if you kill something you could not identify, say so, in full, including that you cannot certify what was lost. The disclosure is the whole difference between one re-run and a day spent diagnosing a harness that was working.
+
 ## C. Python and subprocess
 
 ### C1. A stale or wrong virtual environment produces a wave of fictitious failures
