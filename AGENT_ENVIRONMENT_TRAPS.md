@@ -572,6 +572,18 @@ you should already have proved by a postcondition. Tolerating only the "already 
 not enough: the not-empty case crashes the same finished run, and it is the one a reader does
 not predict.
 
+### D12. A nested `pytest.main()` call costs a large fixed amount, whatever it collects
+
+**What breaks:** Calling `pytest.main()` from inside a running test -- the obvious way to exercise a pytest plugin, a collection hook, or anything that drives pytest -- can carry a large *fixed* cost per call that has nothing to do with what the nested run collects. The outer test pays it on every run. A unit test that looks trivial becomes one of the most expensive modules in the suite.
+
+**Presents as: slowness, not a defect.** In the measured case an isolated nested run containing only `assert 1 == 1` took 46.28 s and 45.77 s on two calls; three real nested runs of a plugin took 52.11 s, 112.46 s and 46.76 s. Because the fixed cost dwarfs the work inside the call, nothing a reader would think to trim changes it.
+
+**Detect:** Search the test tree for `pytest.main(` and for subprocesses that run `-m pytest`. Compare such a module's measured duration against how little its body does; a cost sitting near a multiple of the fixed overhead is the signature.
+
+**Do instead:** Drive the plugin's hook methods directly -- invoke the start hook, perform the real operation, invoke the finish hook. That exercises the same code path a nested collection would, in milliseconds.
+
+**Remedy, and the part that is easy to skip:** calling hooks directly does not prove that pytest really calls those hook names with those signatures. Prove that wiring once, by an actual nested run, record the result where the next reader will find it, and trust it from then on instead of re-paying the fixed cost on every run.
+
 ## E. Git: history, worktrees, hooks, staging
 
 ### E1. `git rev-list --all` under-reports a repository whose history was rewritten
