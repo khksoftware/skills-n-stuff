@@ -340,6 +340,18 @@ Increasing the timeout cannot repair a bounded-buffer deadlock.
 
 **Remedy, and it is the part the killer controls:** if you kill something you could not identify, say so, in full, including that you cannot certify what was lost. The disclosure is the whole difference between one re-run and a day spent diagnosing a harness that was working.
 
+### B16. A descendant walk by parent PID cannot see an orphaned process on Windows
+
+**What breaks:** Windows does not reparent a process when its parent exits. A check that finds a process tree by walking parent PIDs down from a root cannot see any descendant whose own parent has already exited -- it is unreachable from the root. "No descendants found" gets read as "the tree has stopped", and the orphan keeps running.
+
+**Presents as: a clean verdict with a live process behind it.** In the measured case a root's launcher spawned a grandchild and exited; both the post-exit settle check and the terminate path reported the tree quiescent, and the grandchild was alive afterwards. A test that appeared to cover the case had faked the orphan as reachable from its dead root, which the real walk showed it is not.
+
+**Detect:** Any decision about quiescence or completed termination that rests on a parent-PID snapshot. Prove it with a real orphan -- a launcher that spawns a child and exits -- and assert the child is *gone*, not that the check reported clean.
+
+**Do instead:** Contain the tree at launch instead of discovering it afterwards. Assign the root to a Job Object with kill-on-job-close, and decide quiescence from the job's own process accounting.
+
+**Remedy:** Where containment is impossible, report quiescence as unproven rather than achieved. A check that says "stopped" when it means "found nothing it could see" is worse than one that says it cannot tell.
+
 ## C. Python and subprocess
 
 ### C1. A stale or wrong virtual environment produces a wave of fictitious failures
@@ -415,6 +427,16 @@ Increasing the timeout cannot repair a bounded-buffer deadlock.
 **Do instead:** Do not make the cases pass by running the suite under the interpreter production hardcodes. That buys a green that proves nothing about the environment you meant to test. Until the seam below exists, report the cases as not evaluated, with this reason, and never as passed.
 
 **Remedy:** Resolve the canonical interpreter in exactly one production function, and have tests replace that function with `sys.executable`, the way any other environment seam is replaced. Production behaviour stays byte-identical, and the cases then run under any interpreter.
+
+### C8. Two concurrent `os.replace` calls onto one target can both succeed on Windows
+
+**What breaks:** Two processes each renaming a file onto the *same* target at the same moment can both get a successful return. Code that treats a successful rename as proof it won a race -- the standard atomic-claim idiom -- is wrong: both callers believe they claimed the file.
+
+**Presents as: usually nothing, plus a comment that says the opposite.** In the measured case both renames succeeded in 6 of 10 real concurrent races, against a code comment asserting that could not happen. Only one process still got in, because exclusion actually came from a later read-back and an exclusive lock write, not from the rename the comment credited.
+
+**Detect:** Any lock, claim or consume path whose correctness argument is "the rename is atomic, so only one caller succeeds". Race it with separate processes, not threads in one interpreter, and count the successes.
+
+**Do instead:** Claim with an exclusive create (`open(path, "x")`, `O_CREAT|O_EXCL`) and verify ownership by reading back before acting. Treat a successful rename as moving bytes, never as winning.
 
 ## D. pytest and test collection scope
 
