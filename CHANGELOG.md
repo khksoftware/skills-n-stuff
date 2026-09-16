@@ -4,6 +4,43 @@ All notable changes to these skills are recorded here. Versions follow
 [Semantic Versioning](https://semver.org/), read against the skills as a
 published set rather than against any single file.
 
+## 3.1.0 — 2026-09-16
+
+### Added
+
+Eleven traps, each from an observed and reproduced failure. Additive only; no skill changed.
+
+- **`A11`: a delimiter the payload may contain round-trips byte-identically while changing the
+  value.** A renderer and parser that agree on a delimiter but not on whether the payload may
+  contain it re-render perfectly at the byte level while corrupting the data, so a byte-comparison
+  check passes over the corruption.
+- **`B14`: a background task that hits the runtime's timeout ends its wrapper and leaves the child
+  running.** The completion notice carries the wrapper's exit status, so the agent records a run as
+  stopped that is still consuming the machine.
+- **`B15`: a blanket process kill is a cross-stream act, and the run it destroys reports as a
+  failure.** Killing by interpreter name takes other streams' runs with it, and a killed run leaves
+  the same traces a genuinely failed one does.
+- **`B16`: a descendant walk by parent PID cannot see an orphaned process on Windows.** Windows does
+  not reparent, so "no descendants found" is read as "the tree has stopped" while the orphan runs on.
+  Contain at launch with a kill-on-close job instead.
+- **`C7`: a fixture that records `sys.executable` passes only under the interpreter production
+  hardcodes.** Run the suite under any other interpreter and the test fails for a reason unrelated to
+  what it checks.
+- **`C8`: two concurrent `os.replace` calls onto one target can both succeed on Windows.** A
+  successful rename is not proof of winning a race; claim with an exclusive create and verify
+  ownership instead.
+- **`D11`: concurrent isolated runs race on the shared parent directory each one tidies up.** A run
+  that removes an emptied shared parent can fail a sibling that has already finished its real work.
+- **`D12`: a nested `pytest.main()` call costs a large fixed amount, whatever it collects.** Measured
+  at roughly 46 seconds for a nested run containing one trivial assert. Drive the plugin's hooks
+  directly, and prove the hook wiring once rather than on every run.
+- **`E21`: a lock file left by a dead process blocks every writer, and "wait and retry" can never
+  clear it.** The standard advice is right for a live holder and useless for a dead one.
+- **`E22`: a fresh checkout has the tracked directory but not the ignored runtime file a test reads
+  inside it.** The test passes in a long-lived working copy and fails in every new worktree or clone.
+- **`E23`: a linked worktree's `.git` file is hidden on Windows, so a truncating write to it is
+  refused.** `Path.write_text` and `open(path, "wb")` raise `PermissionError` on the pointer file.
+
 ## 3.0.0 — 2026-09-08
 
 ### Changed
