@@ -352,6 +352,18 @@ Increasing the timeout cannot repair a bounded-buffer deadlock.
 
 **Remedy:** Where containment is impossible, report quiescence as unproven rather than achieved. A check that says "stopped" when it means "found nothing it could see" is worse than one that says it cannot tell.
 
+### B17. A backgrounded command outlives the agent that started it, and stopping the task ends only its shell
+
+**What breaks:** A command an agent leaves running in the background keeps running after the agent ends. That includes a foreground command the runtime moved to the background when it exceeded its time limit, so a background task can exist without anyone deciding to create one. After the agent ends, the runtime's task list either keeps listing that agent as running, because its child is alive, or drops the shell entirely while the process runs on. Stopping the task reports success and ends the shell, not the process the shell started. It is the same wrapper-versus-child mechanism as B14, reached without any timeout.
+
+**Presents as: a clean report with the disk still busy.** In the measured case two agents each ran a file search from the filesystem root across every drive. Each exceeded the foreground limit and was moved to the background, and one agent even noted it should not have started the scan, then never stopped it. Hours later a human asked why a task was still running. The second search was absent from the task list altogether while its process ran. The first agent's lingering entry had been dismissed as the task list's known false-running habit (B6); the entry was accurate, and dismissing it hid the child. Stopping the first task reported success with the search still in the process table.
+
+**Detect:** When an agent ends, and whenever the task list shows an agent that has already reported done, read the operating system's process table for the commands that agent issued. On Windows, `Get-CimInstance Win32_Process` returns full command lines. An entry for a finished agent is a reason to look for a child, not a reason to dismiss the entry.
+
+**Do instead:** Keep long commands from reaching the background by accident. Bound them with an explicit timeout, a depth or path limit, or an exact query over indexed content, and never search from a filesystem or drive root. An agent that did background something stops it before reporting done and confirms from the process table that it is gone.
+
+**Remedy:** After stopping a task, confirm from the process table. If the process remains, stop it by process id once its command line has told you what it is, never by name (B15).
+
 ## C. Python and subprocess
 
 ### C1. A stale or wrong virtual environment produces a wave of fictitious failures
