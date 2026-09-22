@@ -450,6 +450,44 @@ Increasing the timeout cannot repair a bounded-buffer deadlock.
 
 **Do instead:** Claim with an exclusive create (`open(path, "x")`, `O_CREAT|O_EXCL`) and verify ownership by reading back before acting. Treat a successful rename as moving bytes, never as winning.
 
+### C9. `mkstemp` leaves an open handle, and Windows will not delete the file
+
+**What breaks:** `tempfile.mkstemp()` returns a `(fd, path)` pair and the caller owns the descriptor. The common idiom of keeping only the path -- subscripting the pair -- discards the descriptor *without closing it*, leaving an open handle on the file for the life of the process. Windows refuses to delete a file any handle is open on, including the caller's own.
+
+**Presents as:** A later delete -- most often in a test's cleanup, so it fires during teardown *after* every assertion passed -- raises a permission error saying the file is in use by another process. **The message names another process and there is not one**: the handle belongs to the process reading the message. It reads as a real concurrency problem and sends you looking for a second writer that does not exist. POSIX silently tolerates an unlinked-but-open file, so the idiom is invisible there and is common in cross-platform code written POSIX-first.
+
+**Detect:** Create a temporary file this way, discard the descriptor, and delete the path immediately. It raises on Windows and succeeds on POSIX. In a suite, look for any subscript of the pair that never closes element 0.
+
+**Do instead:** Take both halves and close the descriptor before anything touches the path. Where a context-managed object is acceptable, a named temporary file opened with deletion disabled, then explicitly closed, makes closing part of the ordinary API rather than something to remember.
+
+**Remedy:** `fd, path = tempfile.mkstemp(...); os.close(fd)` before using or deleting `path`. For a suite already carrying the idiom, one small helper that closes the descriptor and returns only the path fixes every site at once.
+
+### C10. A module defining a dataclass fails to load by file path unless it is registered first
+
+**What breaks:** Loading a module by file path -- build a spec from the location, make a module from the spec, execute it -- without first assigning the module into the interpreter's module table leaves no entry under the module's own name. The dataclass machinery resolves *string* annotations by looking the defining class's module up in that table, and on CPython 3.10 that lookup is **unguarded on exactly one branch**: the one taken when the annotation's type name is bare rather than dotted. The class definition then raises from inside the standard library.
+
+**Three conditions must hold together, and the obvious statement of this trap names only the first two:** a file-path load with no module-table registration; a dataclass in the module; and at least one field whose annotation is a *string* naming `ClassVar` or `InitVar` by a **bare, undotted** name -- either literally quoted, or turned into a string by the future-annotations import.
+
+**Presents as:** An attribute error about `NoneType` having no `__dict__`, raised at class-definition time from inside the standard library's own dataclasses module. **Your code appears nowhere in the final frame**, so it reads as a standard-library bug or a version quirk rather than a loader-ordering mistake several frames up. A module with no dataclass, or whose annotations are all real objects or all dotted, loads perfectly -- so a project whose file-path loading convention has never hit this has not established that the convention is safe, only that nothing has yet met the third condition.
+
+**Detect:** Construct all three conditions together: import `ClassVar` by bare name, annotate a field with the quoted string `'ClassVar[int]'`, and load the module by file path with no prior registration. Then change the annotation to the dotted `'typing.ClassVar[int]'` as a control -- it takes the guarded branch and loads cleanly, and that difference is the whole discriminator.
+
+**Do instead:** Assign the module into the module table under the spec's name *before* executing it. It is harmless for every module that does not need it, so it belongs as a blanket default inside any file-path loading helper rather than as a fix applied where the failure happened to surface. Where the module has a real package landing path, import it normally instead -- ordinary import machinery registers it as a side effect.
+
+**Remedy:** `spec = importlib.util.spec_from_file_location(name, path); module = importlib.util.module_from_spec(spec); sys.modules[spec.name] = module; spec.loader.exec_module(module)`
+
+### C11. A command chain passed as one argument to a no-shell subprocess call is re-escaped and rejected
+
+**What breaks:** On Windows, running a subprocess from an argument *list* without requesting a shell composes the child's command line through the standard library's own quoting function, which wraps any element containing spaces in double quotes and escapes that element's own inner double quotes with backslashes. **The Windows command interpreter does not treat a backslash as an escape character.** So a command chain handed over as a single argument element arrives with its first token literally beginning backslash-quote, and the interpreter goes looking for a command by that mangled name. It bites hardest against a wrapper whose contract is to execute a caller-supplied tail command as a fixed argument list, because there the caller cannot reach the shell option at all.
+
+**Presents as:** A *not recognized as an internal or external command* error naming a fragment of a real, correct path, sometimes broken mid-word. **It reads as a wrong or corrupted path**, so the instinct is to go and verify the path -- which is correct, resolves nothing, and costs you the actual lead. The exit status is a plain 1 with empty output, indistinguishable from the chain's first step having failed on its own merits.
+
+**Detect:** Any interpreter chain (`&&`, `||`, `;`) passed as a single element of an argument list to a call that does not request a shell. Print the composed command line for the exact call before running it: backslash-escaped double quotes inside the chain element are the tell, visible without executing anything.
+
+**Do instead:** **Do not repair it by dropping the inner quotes.** Measured: the unquoted chain runs clean right up until a path contains a space, then fails on a truncated path -- a narrower trap with a less legible symptom, bought by removing the legible one. Where you control the call, pass the chain as a plain *string* and request a shell; the runtime then hands the string to the interpreter without the quoting function touching it. Where the callee executes a fixed argument list, give it **one** arguments-only helper script as ordinary argument elements and let that script perform the sequence through its own subprocess calls -- which removes interpreter quoting from the path entirely rather than negotiating with it.
+
+**Remedy:** `subprocess.run(chain_string, shell=True)` where you own the call; otherwise `subprocess.run([interpreter, helper_script, arg1, arg2, ...])`, with the helper taking every path from its own arguments and embedding none.
+
 ## D. pytest and test collection scope
 
 ### D1. pytest cache residue lands inside a directory governed by an exact-file allowlist
