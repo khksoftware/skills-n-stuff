@@ -668,6 +668,18 @@ not predict.
 
 **Remedy, and the part that is easy to skip:** calling hooks directly does not prove that pytest really calls those hook names with those signatures. Prove that wiring once, by an actual nested run, record the result where the next reader will find it, and trust it from then on instead of re-paying the fixed cost on every run.
 
+### D13. Calling a test module's `setUpModule()` yourself runs it twice under a test runner
+
+**What breaks:** `unittest`'s loader and runner already call a module's `setUpModule()` and `tearDownModule()` exactly once, as part of the module-level fixture protocol. If a harness calls `setUpModule()` by hand to prepare state, then hands the same module to the loader or runner, the fixture runs twice. The second, automatic call overwrites whatever the first one built.
+
+**Presents as:** Tests fail as if your preparation never happened, for example a fixture file holding the original content rather than the content you placed. Reading your own harness shows the preparation clearly running, which sends you looking for a bug in the preparation instead.
+
+**Detect:** Any explicit `setUpModule()` call in code that then passes the same module to `TestLoader`, `TextTestRunner` or `unittest.main`.
+
+**Do instead:** Never call the module-level fixture yourself when a runner will. Change what the fixture reads from, such as a module-level root or path global, before the runner starts, and let the runner make its single call.
+
+**Remedy:** Set the module attribute the fixture depends on, then run the module through the runner alone.
+
 ## E. Git: history, worktrees, hooks, staging
 
 ### E1. `git rev-list --all` under-reports a repository whose history was rewritten
