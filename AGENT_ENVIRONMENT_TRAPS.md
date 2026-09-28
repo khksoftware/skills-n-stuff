@@ -680,6 +680,18 @@ not predict.
 
 **Remedy:** Set the module attribute the fixture depends on, then run the module through the runner alone.
 
+### D14. A production module named `test_*.py` outside a test tree is collected as a test module
+
+**What breaks:** pytest's default `python_files` pattern is `test_*.py`, and its default `python_functions` prefix is `test`. A tooling or library module named, say, `test_footprint.py` is therefore collected by any run that walks its directory. Its own functions whose names begin with `test` (`tests_reaching`, `test_graph_for`) are collected as tests, and their parameters are looked up as fixtures.
+
+**Presents as:** `fixture 'graph' not found` errors on functions that were never tests, from a module nobody meant to run. A tool that picks "the test modules a change touches" by the `test_*.py` shape runs it too, and reports the errors as the change's own reds.
+
+**Detect:** Any `test_*.py` outside a test directory, especially in a package of production code.
+
+**Do instead:** Never give a non-test module a `test_` prefix: name it for what it does (`footprint_graph.py`, `run_admission.py`). A selector that means "test modules" should require a test directory, not just the file-name shape.
+
+**Remedy:** Rename the module, update its importers, and re-register the test module that covers it.
+
 ## E. Git: history, worktrees, hooks, staging
 
 ### E1. `git rev-list --all` under-reports a repository whose history was rewritten
@@ -918,6 +930,18 @@ not predict.
 **Do instead:** Avoid rewriting a linked worktree's `.git` file at all; `git worktree` owns it. Where a test must corrupt and then restore it deliberately, write in place and restore the original bytes in a `finally`.
 
 **Remedy:** `with open(path, "r+b") as handle: handle.seek(0); handle.write(data); handle.truncate()`
+
+### E24. A proposal diff built on a stale copy applies cleanly and reverts a later fix
+
+**What breaks:** a worker copies a file, edits the copy over a long task, and produces its diff as "HEAD's blob versus my edited copy". Meanwhile another change landed in that file. The diff now carries the removal of that newer content as ordinary `-` lines, and its context matches HEAD exactly, because the diff was taken against HEAD. `git apply --check` exits 0 and the apply succeeds. The landed fix is silently undone.
+
+**Presents as:** SUCCESS: a clean apply, and a passing run of the worker's own tests, which never exercised the reverted fix. The loss is found later, if at all, when the fixed behaviour regresses.
+
+**Detect:** For every line a diff removes, check whether that line existed in its file at the commit the work started from. A removed line that did not exist at that base was introduced after it, and the diff is taking it out. `git log -S'<line>' <base>..HEAD -- <path>` names the commit that introduced it.
+
+**Do instead:** State the base commit in every brief. At intake, run the base check above on the diff's `-` lines, and read every flagged hunk before applying. Where the diff predates a change to the same file, merge it three ways against its real base, or port its hunks by hand, rather than trusting a clean apply.
+
+**Remedy:** Restore the reverted lines from the commit the check names, and re-run the tests that cover that fix.
 
 ## F. Content-hash pinning and line endings
 
