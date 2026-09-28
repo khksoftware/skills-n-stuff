@@ -364,6 +364,18 @@ Increasing the timeout cannot repair a bounded-buffer deadlock.
 
 **Remedy:** After stopping a task, confirm from the process table. If the process remains, stop it by process id once its command line has told you what it is, never by name (B15).
 
+### B18. A subagent's file write is refused for a report-shaped name, and the refusal reads as a blanket ban
+
+**What breaks:** Some agent harnesses refuse a subagent's file-write tool call when the target *looks like a report*. In the harness where this was measured, the condition is exact. The extension is `.md`, and the basename stem, lowercased, is `report`, `summary`, `findings` or `analysis`, optionally plural and optionally followed by digits. Directory, depth, first write versus overwrite, and content play no part. A supervisor that declares a progress checkpoint named `report.md` has therefore declared a file its worker cannot write with the tool it naturally reaches for.
+
+**Presents as:** The refusal message says that subagents should return findings as text, not write report files. That reads as *"file writes are not done here"*. The worker concludes, reasonably, that the checkpoint contract cannot be met, and returns prose instead. Every write elsewhere in the same directory succeeds, which nobody tries after the refusal. The supervisor loses its ability to read progress without messaging the worker, for the whole run.
+
+**Detect:** Before dispatch, check every declared checkpoint's basename against the pattern. After the fact, a worker's report that quotes the refusal is the tell, and so is a control directory holding a cursor file but no checkpoints.
+
+**Do instead:** Rename the file. A numbered or task-id prefix (`01-plan.md`) or a non-`.md` extension avoids the shape completely. **Do not fix it by telling every brief to write through a shell redirect.** That works only while every brief-writer remembers why the sentence is there, which is the same accident written down.
+
+**Remedy:** Refuse the report-shaped basename structurally, at the point where a dispatch's checkpoints are declared, so the shape can never be issued.
+
 ## C. Python and subprocess
 
 ### C1. A stale or wrong virtual environment produces a wave of fictitious failures
