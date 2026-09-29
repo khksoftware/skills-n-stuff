@@ -4,6 +4,30 @@ All notable changes to these skills are recorded here. Versions follow
 [Semantic Versioning](https://semver.org/), read against the skills as a
 published set rather than against any single file.
 
+## 3.2.0 — 2026-09-29
+
+### Added
+
+Eight traps, each from an observed and reproduced failure. This release is additive only; no skill
+changed.
+
+- **`B17`: a backgrounded command outlives the agent that started it, and stopping the task ends
+  only its shell.** A child the command launched keeps running after its task reads as stopped.
+- **`B18`: a subagent's file write is refused for a report-shaped name, and the refusal reads as a
+  blanket ban.** Give the file a numbered name, such as `01-plan.md`, instead of redirecting the
+  write.
+- **`C9`: `mkstemp` leaves an open handle, and Windows will not delete the file.** Close the
+  descriptor before removing the path.
+- **`C10`: a module that defines a dataclass fails to load by file path unless it is registered
+  first.** Put it in `sys.modules` before executing it.
+- **`C11`: a command chain passed as one argument to a no-shell subprocess call is re-escaped and
+  rejected.** Pass argv, or run the chain through a shell deliberately.
+- **`D13`: calling a test module's `setUpModule()` yourself runs it twice under a test runner.**
+- **`D14`: a production module named `test_*.py` outside a test tree is collected as a test
+  module.**
+- **`E24`: a proposal diff built on a stale copy applies cleanly and reverts a later fix.** Check it
+  against its own base for silent reverts, not only whether it applies.
+
 ## 3.1.0 — 2026-09-16
 
 ### Added
