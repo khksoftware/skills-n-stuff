@@ -4,6 +4,45 @@ All notable changes to these skills are recorded here. Versions follow
 [Semantic Versioning](https://semver.org/), read against the skills as a
 published set rather than against any single file.
 
+## 3.4.0 — 2026-09-30
+
+### Added
+
+Twenty-eight traps from a contributed set, drawn from a second project (a Windows PowerShell
+5.1/7 packaging tool with Pester, SQL Server LocalDB, a small .NET service and a Playwright
+suite), each a recorded incident. No skill changed.
+
+- **Long-running work:** `B19` an orphaned server process holds the files a restart needs, and
+  the service manager cannot see it; `B20` a job that mutates files and restores them leaves the
+  tree mutated when it is cut short.
+- **Test runs:** `D15` tests that skip on an unreachable dependency turn an outage into a green
+  run; `D16` a suite run as the environment's owner never exercises a least-privileged caller;
+  `D17` every test failing instantly with no error record means the runner is broken; `D18` a
+  surviving mutant can mean the code is redundant; `D19` a file restored by copy keeps its old
+  timestamp, so an incremental build keeps the mutated output.
+- **Line endings:** `F8` a line-ending check run through the agent's shell reports CRLF for files
+  that have none.
+- **Browser testing:** `H4` endpoint security can refuse to start the browser a test runner
+  launches.
+- **PowerShell:** `I12` to `I24`, from a deliberate `throw` sharing a runtime fault's exception
+  type to `-Include` being ignored with `-LiteralPath` on 5.1, 260-character paths on 5.1,
+  `Set-Location` not moving the process, byte-array slices, operator precedence in indexes,
+  closures across module scope, `if` in an expression, alias shadowing, non-terminating errors,
+  `Read-Host` in redirected output, and Pester 6 filtered mocks.
+- **Toolchain availability:** `J2` a command on the path can be an installer stub; `J3` a local
+  instance reported missing may be invisible only to this client or session; `J4` a launcher
+  tested from a shell inherits that shell's environment.
+- **New section L, database and service clients:** `L1` two SQL clients connect with different
+  SET options, and a module keeps the ones it was created under; `L2` a locking defect
+  reproduces only in the data state that produced it; `L3` a successful response has not
+  necessarily answered the question.
+
+### Changed
+
+- Ten entries gain a further form of the same trap: `A1`, `A3`, `B3`, `D3`, `D5`, `F2`, `F4`,
+  `I1`, `I6`, `I11`.
+- The document's opening now names PowerShell with Pester and SQL Server among the toolchains.
+
 ## 3.3.0 — 2026-09-30
 
 ### Added

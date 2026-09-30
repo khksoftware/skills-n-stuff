@@ -1,6 +1,6 @@
 # Agent environment traps
 
-Environment- and tool-level failure modes, each one met in real agentic coding work rather than imagined. Observed on Windows, with an agent runtime driving both PowerShell and a POSIX-style Bash tool, Git for version control, and Python with pytest as the toolchain. Most of them are not specific to that combination.
+Environment- and tool-level failure modes, each one met in real agentic coding work rather than imagined. Observed on Windows, with an agent runtime driving both PowerShell and a POSIX-style Bash tool, Git for version control, and Python with pytest, PowerShell with Pester, and SQL Server as toolchains. Most of them are not specific to that combination.
 
 ## The one property worth reading twice
 
@@ -21,6 +21,14 @@ Every entry here is one failure: **content corrupted as it crosses a shell bound
 **Do instead:** Pass the pattern through a file, a command-line argument, or a verified raw-string literal, rather than embedding it in a heredoc. Prefer a dedicated file-editing tool over a shell-mediated edit script entirely. Assert the precondition *before* writing, not only after — an edit script whose asserts gate the write converts silent corruption into a visible no-op.
 
 **Remedy:** Guard the write with an assert on the match before writing, then re-read the file in a *separate* command. Never verify inside the command that performed the write.
+
+**A further form of this trap.**
+
+**What breaks:** The same silent no-op edit can happen with no heredoc involved. Take a scripted replace in PowerShell, either `$text.Replace($old, $new)` or `$text -replace $pattern, $new` over a file's contents. If the search text does not occur exactly, the replace changes nothing and reports nothing: `.Replace()` hands back the string unchanged, and `-replace` hands back its input when the pattern does not match. On Windows the most common mismatch is one you cannot see. The file uses CRLF line endings and the search text the agent typed uses LF, so every multi-line search fails. `-replace` adds a second cause, because its pattern is a regular expression and a literal `(`, `$`, `.` or `\` in it means something else.
+
+**Presents as: SUCCESS.** The write-back succeeds and writes the original content. The next test run then looks like the code under test "doing nothing", which sends the investigation into the code rather than into the edit.
+
+**Do instead:** Route every scripted edit through one helper that counts the occurrences of the literal search text and throws before writing anything unless the count is exactly one. "At least once" is not enough, because a second occurrence means the edit may have landed on the wrong one. When the search text is literal, use `.Replace()` or `[regex]::Escape()`. When you don't know the file's line endings, normalise them on both sides of the comparison or search line by line.
 
 ### A2. A PowerShell here-string is not a Bash heredoc
 
@@ -45,6 +53,16 @@ Every entry here is one failure: **content corrupted as it crosses a shell bound
 **Do instead:** Never pass content containing backticks through a quoted shell string. Write the body to a file directly, then have your program read the file. Assert the tokens are present in the *source* before writing, so a mangled input fails closed rather than landing. A single-quoted heredoc also suppresses substitution for genuinely static content, but doesn't compose with content assembled elsewhere.
 
 *General takeaway, shared with A1 and A2: content that will be stored should never be assembled by the shell that runs the command.*
+
+**A further form of this trap.**
+
+**What breaks:** `$(...)` is the same command substitution as a backtick span, and PowerShell has its own version of it. A PowerShell double-quoted string evaluates `$(...)` as a subexpression and fills in every `$name`, and the backtick is PowerShell's escape character. That makes generated *PowerShell source* the worst case for either shell, because it is full of `$`. In the observed case, an edit command carried a PowerShell subexpression inside a double-quoted string. The shell running the command evaluated it and wrote the result into the file in place of the code.
+
+**Presents as:** Code that looks valid but does the wrong thing. A subexpression is replaced by whatever it evaluated to in the agent's own session (often an empty string), or a variable reference is replaced by nothing. The generated script parses and then misbehaves, and the diff reads like a logic error rather than a quoting one.
+
+**Detect:** Grep the written file for the `$(` and `$name` tokens the intended content contained. If they are missing, or a literal value sits where one should be, this is the trap.
+
+**Do instead:** Apply A3's rule with no exceptions: write any content that contains `$`, backticks or quotes through a file-writing tool, never through a command string in either shell. Where an inline PowerShell literal cannot be avoided, use a single-quoted string or here-string, which evaluates nothing. A4 covers what can still happen to it on its way to a native executable.
 
 ### A4. A double quote inside a PowerShell here-string still splits a native executable's argument
 
@@ -207,6 +225,16 @@ Increasing the timeout cannot repair a bounded-buffer deadlock.
 **Detect:** Check the listing twice, seconds apart, and treat disagreement between the two observations as the actual answer rather than as noise.
 
 **Do instead / remedy:** Prefer a full clean restart over continued diagnosis of an ambiguous listing, and re-verify any claimed-fixed live bug against the actually-running application rather than against a process/port listing.
+
+**A further form of this trap.**
+
+**What breaks:** A local service that stops when idle and starts again on the next connection can come back at a *different* address. SQL Server LocalDB does this. An instance shuts down after a period with no connections and restarts with a new named-pipe name, so a pipe name captured at the start of a session points at nothing an hour later. The service's own status command is not proof either. For a moment after a restart, `sqllocaldb info` still reports the previous pipe.
+
+**Presents as:** Everything that depends on the captured address fails to connect, while the status command insists the instance is running at the address you have. Where the suite skips tests whose dependency is unreachable (D15), those tests skip silently instead.
+
+**Detect:** Just before trusting the address, test it with a real connection (`SqlConnection.Open()`), not a status query. What the status command reports and whether a connection actually opens are two different facts.
+
+**Do instead / remedy:** Look the address up just before each run rather than once per session, and test it. When the test fails, ask the status command again rather than retrying the stale value.
 
 ### B4. Process display names vary by installed version
 
@@ -376,6 +404,26 @@ Increasing the timeout cannot repair a bounded-buffer deadlock.
 
 **Remedy:** Refuse the report-shaped basename structurally, at the point where a dispatch's checkpoints are declared, so the shape can never be issued.
 
+### B19. An orphaned server process holds the files a restart needs, and the service manager cannot see it
+
+**What breaks:** A service manager can record an instance's state separately from the process itself. When it does, it can believe the instance is stopped while an earlier server process is still alive and still holds the instance's data files open. A new start cannot open those files, so it fails. It cannot write its own error log either, because that file is held too. The manager's stop command does nothing, because as far as the manager knows there is nothing to stop.
+
+**Presents as:** A generic "process failed to start" and a status of stopped with an empty address. The error log's last entry is hours old and describes a *successful* start. That log reads as evidence that the server is fine, and the stale success is the newest thing anyone can find.
+
+**Detect:** Check the process table, not the manager. A live server process for the instance while the manager says stopped is the telltale sign. On Windows, `Get-CimInstance Win32_Process` shows each server's full command line, which identifies the instance it belongs to (for LocalDB, an argument of the form `-sLOCALDB#<id>`). Compare the log's newest timestamp with the time of the failed start. A log older than the failure did not record it.
+
+**Do instead / remedy:** First use the command line to confirm the orphan is the stale instance, and not a live one that another session owns (J3). Then stop it by process id, never by image name (B15), and start the service normally. Read a service log's last entry as the last thing the service *was able to* write, not the last thing that happened.
+
+### B20. A job that mutates files and restores them leaves the tree mutated when it is cut short
+
+**What breaks:** Mutation testing, and any loop that edits a source file, runs the tests and puts the file back, is safe only if the put-back happens and is checked. There are two ways it doesn't. (1) The job is stopped between mutating and restoring: the harness timeout on a background task (B14), the agent ending, a kill. The mutation stays in the working tree. (2) The restore is written in the *same* command as the mutation and the test run: read the file into a variable, write the mutation, run the tests, write the variable back. That in-process restore silently does not take. Both were observed. In the second case the file was left carrying two mutations at once.
+
+**Presents as:** A small, plausible change in the working tree that nobody made on purpose. The next, unrelated test run then fails, or worse, passes, because the surviving mutation is one the suite does not catch, which is exactly what a mutation run is looking for. It reads as someone's in-progress edit, and on a shared checkout it can be committed as one.
+
+**Detect:** Before the job starts, record a hash of every file it may touch, in a manifest outside the tree. When the job ends, for whatever reason, compare against it. Tag each mutation with a unique marker so that a grep over the tree finds any survivor.
+
+**Do instead:** Copy the pristine file aside before mutating it. Restore it in a *separate* process that copies it back, checks the hash against the recorded manifest, and exits non-zero on a mismatch. Make the restore safe to run more than once and runnable on its own, so an interrupted run can be repaired by running it again. Print each destination path before writing to it. Keep each mutate-run-restore cycle well inside the runtime's timeout, or run the job detached and poll it. After restoring, see D19: a restored file can still leave a stale build behind.
+
 ## C. Python and subprocess
 
 ### C1. A stale or wrong virtual environment produces a wave of fictitious failures
@@ -532,6 +580,14 @@ Increasing the timeout cannot repair a bounded-buffer deadlock.
 
 **Do instead / remedy:** Run the two trees as *separate* test-runner invocations rather than naming both on one command line. Report the result as two runs with two denominators, not one combined figure. Do not reach for a "continue past collection errors" flag here — it converts a loud, obvious failure into exactly the silent partial run this trap is about.
 
+**A further form of this trap.**
+
+**What breaks:** PowerShell has the same shape. Suppose one test file runs a *built* artifact inside the test session, such as a packaged script that imports its own copy of the project's module. That loads a second module with the same name as the one under test. From then on, every later test file that mocks a function in that module by name (`Mock -ModuleName <Name>`) stops with *"Multiple script or manifest modules named '<Name>' are currently loaded"*.
+
+**Presents as:** A test file that is green when run on its own and red only in the full suite, which is the run that matters. The error names the module, not the earlier test that loaded its twin.
+
+**Do instead / remedy:** A test file that mocks a module's functions should start its setup by removing every loaded copy of that module (`Get-Module <Name> | Remove-Module -Force`), then import the one it means. More generally, run a built artifact in a child process rather than in the test session, so its copies of your modules disappear when it exits.
+
 ### D4. A test that re-reads a live, shared file changes verdict with no code change
 
 **What breaks:** A test that binds its subject at import time but re-reads that same file/state at call time will pass or fail depending purely on whether something else has written to that file in the meantime — nothing to do with the code under test. In a codebase touched by many concurrent agents or processes, this can affect a large share of the suite.
@@ -551,6 +607,16 @@ Increasing the timeout cannot repair a bounded-buffer deadlock.
 **Detect:** After any change to a shared contract (a schema, a required field, a renderer), run the owning test suite and read the *collected* count, not just the failure count. A collected count far below normal, or the word "Interrupted," is the signature.
 
 **Do instead:** Sequence a tightened contract behind the content it constrains — land only the relaxing half that existing content can still satisfy, and keep the strict half pending until the artifact itself has actually moved to comply.
+
+**A further form of this trap.**
+
+**What breaks:** Pester 5 and later have a discovery phase, and code that runs during it is not inside any test: an `It` block's `-Skip:` expression, a `-ForEach` value, anything at file scope. Suppose that code throws, for example because `-Skip:` calls a helper that is only imported in `BeforeAll`, which has not run yet. Discovery of that file stops at that point, and every test after it simply does not exist.
+
+**Presents as: SUCCESS, with a smaller total that nobody reads.** Unlike D5's run of zero tests, the rest of the suite runs normally. The missing tests are not counted as failed, skipped or anything else, and the summary line is green. In the measured case, 13 of one file's 29 tests were missing from a green run.
+
+**Detect:** Compare each file's discovered-test count with its previous run. Look beyond the test counts in the run's results: Pester records the discovery failure against the file's container, even when the pass/fail/skip totals don't show it.
+
+**Do instead:** Import whatever `-Skip:` and `-ForEach` need in `BeforeDiscovery`. Have the suite runner print a line for every file or block whose discovery failed, and exit non-zero if there are any, so that missing tests fail the run.
 
 ### D6. A background task's completion notification reports the wrapper's exit, not the run's result
 
@@ -691,6 +757,59 @@ not predict.
 **Do instead:** Never give a non-test module a `test_` prefix: name it for what it does (`footprint_graph.py`, `run_admission.py`). A selector that means "test modules" should require a test directory, not just the file-name shape.
 
 **Remedy:** Rename the module, update its importers, and re-register the test module that covers it.
+
+### D15. Tests that skip when their dependency is unreachable turn an environment outage into a green run
+
+**What breaks:** Integration tests that skip cleanly when a database, service, browser or remote server is unavailable are right to skip on a machine that genuinely lacks it. The summary cannot tell that apart from a machine where the dependency is present but unreachable because something else is broken: a stale address (B3), a client that cannot see the instance (J3), or a package missing from a fresh checkout (E22).
+
+**Presents as: SUCCESS.** Zero failures, and a skipped count that nobody compares against anything. A run in which every database test skipped looks exactly like a run in which they all passed, unless the reader looks at the one number that differs.
+
+**Detect:** Report the skipped count, per category, with every result, and compare it with the count on a machine where everything is available. A jump in skips with no change to the tests means the environment has changed. Rule this out first whenever a category's failures suddenly "go away".
+
+**Do instead:** Whenever you report a result, say which categories ran: "green, SQL skipped" is a different claim from "green". Give the runner a switch that turns a missing expected dependency into a failure instead of a skip, and use it for any run whose result will be relied on. Make each skip state its reason, so the summary shows the reason and nobody has to guess it.
+
+### D16. A suite that runs as the environment's owner never exercises a least-privileged caller
+
+**What breaks:** By default a development machine connects as its most privileged identity. The Windows login that owns the local database instance is its sysadmin, the developer is a local administrator, the cloud identity owns the project. Every test therefore runs with rights the production caller does not have, and nothing below that level has ever run. In the measured case, running the same code as a delegated database login found three defects at once:
+- A system view that needs a server-state permission refused with a raw "permission denied". A catalog view gives the same counts to any login that can see the table.
+- A metadata function that returns NULL for an encrypted module *also* returns NULL for a login without view-definition rights. Modules that could run but not be read were reported as encrypted.
+- A principal below full control cannot see the permissions granted on an object. Dropping and recreating the object silently lost those permissions, and the operation still reported success.
+
+**Presents as: SUCCESS** in every run on every developer machine. The failure, or a quietly wrong answer, appears only where a less privileged identity runs the code.
+
+**Detect:** Find out which identity the suite actually runs as. Treat a NULL or empty answer from a metadata or permission query as "not visible to this caller" until something proves "not there". A permission-check function does not replace actually trying: the one used here said "no" for principals that could in fact read the object.
+
+**Do instead:** Create least-privileged principals specifically for the tests during setup, and run the permission-sensitive paths as them. Before stating what rights a caller needs, run the code as a caller with exactly those rights. Prefer operations that keep state the caller cannot see: altering an object in place keeps its grants, while dropping and recreating it does not.
+
+### D17. Every test failing instantly with no error record means the runner is broken, not the code
+
+**What breaks:** A test framework runs test bodies through files in its own install directory. If one of those files is damaged, every test fails, including `1 + 1 | Should -Be 2`, even in a clean process with no profile. Here the file had been overwritten by the project's own code: a .NET file write whose relative path resolved against the process's current directory rather than the shell's location (I16).
+
+**Presents as:** Every test red at once, with telltale absences: discovery still reports the right count, every test's duration is zero, no test has an error record, and the most verbose output mode adds nothing. The test bodies never ran, so there is nothing in them to debug, and the natural next step, bisecting the code, finds nothing.
+
+**Detect:** Run one trivial test in a fresh process. If it fails the same way, list the framework's install directory by last-write time. A file newer than the install date is the damage (Pester: `Get-ChildItem (Get-Module -ListAvailable Pester).ModuleBase -Recurse -File | Sort-Object LastWriteTime -Descending`).
+
+**Do instead / remedy:** Reinstall the framework at the pinned version (`Install-Module Pester -RequiredVersion <v> -Force`). To stop it happening again, print the resolved destination of every write before performing it, and never pass a relative path to a file API that resolves against the process directory.
+
+### D18. A surviving mutant can mean the code is redundant, not that a test is missing
+
+**What breaks:** The usual response to a mutation that survives is to write the test that kills it. But a mutation survives for one of two reasons: nothing tests the behaviour, or the mutated code has no behaviour to test. In the measured case, the mutation deleted a loop that looked up a key case-insensitively in a PowerShell hashtable. It survived because PowerShell's `@{}` hashtables are already case-insensitive. The loop did nothing, and no input could ever tell the mutant apart from the original.
+
+**Presents as:** A gap in the suite, and a pull toward filling it, either with a test that asserts an implementation detail or with a series of tests that pass either way. The suite grows, the mutant still survives, and the redundant code is now pinned in place by tests.
+
+**Detect:** For each survivor, ask whether any input could make the mutant behave differently from the original. If none can, the mutant is equivalent to the original: the code it removed is redundant, or the mutation changed nothing.
+
+**Do instead:** Delete the redundant code and re-run the mutation instead of writing a test for it. Record equivalent mutants, with the reason, separately from real survivors, so the mutation score is reported as neither weaker nor stronger than it really is.
+
+### D19. A file restored by copy keeps its old timestamp, so an incremental build keeps the output built from the mutation
+
+**What breaks:** `Copy-Item` keeps the source file's last-write time, and so do Explorer, the Windows copy APIs and `cp -p`. A file restored that way after a temporary edit is therefore *older* than the build output made from the edit. An incremental build that compares timestamps (`dotnet build`, `tsc -b`, make) decides nothing has changed and keeps the binary built from the mutated source.
+
+**Presents as:** Tests failing against source that is verifiably correct. The hash matches the pristine copy, the diff is empty, and the tests that caught the mutation keep failing. It looks like a test defect or flakiness, because every check of the source says it is fine.
+
+**Detect:** Compare the build output's timestamp with the source's. A source file older than the output it supposedly produced was restored by copy. If a clean rebuild makes the failure disappear, that confirms it.
+
+**Do instead / remedy:** After restoring by copy, set every restored file's last-write time to now (`(Get-Item $p).LastWriteTime = Get-Date`, or `touch`). Alternatively, restore by writing the content rather than copying the file. After any restore that a build depends on, do a clean build or clear the incremental state before trusting a test result.
 
 ## E. Git: history, worktrees, hooks, staging
 
@@ -987,6 +1106,16 @@ not predict.
 
 **Do instead / remedy:** Add an explicit `eol=lf` (or equivalent forced-line-ending) rule for any byte-pinned or hash-pinned path, then re-check it out. The missing pin is the fix; the integrity check itself is correct and should not be adjusted to match the wrong bytes. When you first bind a file's length or hash anywhere, pin its line-ending behavior in the *same* action — treat them as one decision, not two.
 
+**A further form of this trap.**
+
+**What breaks:** Adding the pin is only half the fix. A working copy can have LF endings in every pinned file while `git status` calls it clean. Under `text=auto` or an `eol=` attribute the index stores LF either way, so the attribute is right and the repository is right, but the files on disk are still wrong. Every artifact built from them then hashes differently from one built anywhere else.
+
+**Presents as: SUCCESS** from git, with one signal that is routinely dismissed as noise. `git add` and `git commit` print *"LF will be replaced by CRLF the next time Git touches it"*, once per file, on every commit. That warning means the working copy no longer matches its own attributes.
+
+**Detect:** Treat that warning as a finding, not as chatter. Check the bytes of a pinned file on disk for the line ending its attribute says it should have.
+
+**Do instead / remedy:** Rewrite the working tree through git's line-ending filters. On a checkout with nothing uncommitted, run `git rm -r --cached . && git reset --hard`. That discards uncommitted work, so never run it on a shared checkout another process is using (E5). The file-by-file alternative is to delete a file and `git checkout -- <path>`. Then prove the fix the way F2 says: build from this copy and from a fresh clone of the same commit, and compare every hash.
+
 ### F3. A byte-pinned or sealed file is not safe to touch with an automated cleanup pass
 
 **What breaks:** Any file whose exact bytes are pinned somewhere else (a recorded hash, a signed seal, a fixture asserting exact content) is not safe to touch with a bulk automated pass — a formatter, a line-ending normalizer, a "fix this class of issue everywhere" codemod — even when the specific fix being applied is obviously correct in isolation. Editing it in place breaks whatever binding made it trustworthy as evidence.
@@ -1008,6 +1137,16 @@ not predict.
 **Do instead:** Fix the order once, and write it down where the build cannot drift from it: **sign, then checksum, then catalog, then sign the catalog.** Each step covers everything produced before it, and nothing after it rewrites anything it covered. Where some artifact types cannot carry a signature at all (plain `.sql` or `.csv` files shipped alongside signed scripts), a signed catalog over the whole tree — including the checksum file — is what covers them; without it, "signed package" means "signed runner, plus whatever files happened to be sitting next to it".
 
 ---
+
+**A further form of this trap.**
+
+**What breaks:** The same ordering defect can happen without any signing. Whatever seals a set of files (a checksum manifest, a catalog, a signature over the whole tree) has to be the last thing written into that set. In the observed case, a test harness that assembled a package by hand wrote the checksum file and *then* generated one more file into the package. The package's integrity check refused it for containing an unlisted file.
+
+**Presents as:** An integrity refusal that reads as tampering or as a bug in the verifier, coming from a harness written to produce a valid package. The harness reimplements the build's order instead of calling it, so the real build does not show the refusal. That makes the verifier look wrong when it is right.
+
+**Detect:** After sealing, and before the artifact is used, list the tree in the same harness and compare it against the seal. Anything present but unlisted, or newer than the seal file, was written after it.
+
+**Do instead:** Build test artifacts through the real build's own sealing step, not a copy of its order. Where a harness has to seal by hand, make sealing the final call and assert that nothing is written after it. D1 covers the related case where the unlisted file is leftover output from the run itself.
 
 ### F5. `git add` can normalise line endings into the committed blob, so an archived copy is not the source
 
@@ -1038,6 +1177,16 @@ not predict.
 **Detect:** Check one value's length or repr rather than the count. A trailing invisible character is obvious in a repr and invisible in a total.
 
 **Do instead:** Strip whitespace from every value at the boundary, or have the producer emit an explicit newline. Never accept a count as evidence that piped values were usable.
+
+### F8. A line-ending check run through the agent's shell reports CRLF for files that have none
+
+**What breaks:** The check an agent reaches for is a `grep` that counts lines ending in a carriage return, such as `grep -c $'\r$' <file>`, alongside one that counts lines without it. Run through the agent runtime's Bash tool on Windows, it reported every line of three LF-only files as CRLF, and none as LF. The likely cause is that the `\r` never reached `grep` intact, through the tool's command handling, the shell's quoting, or `grep`'s own text-mode reading, so the pattern matched every line. That was not established; what was established is that the answer was wrong.
+
+**Presents as: SUCCESS.** The check says exactly what the agent hoped. The files were committed on its word. The commit was right, because git normalises line endings, but the working copy stayed LF and every artifact built from it differed from a fresh clone's (F2). The only sign was git's own *"LF will be replaced by CRLF"* warning at commit, which the check had just "disproved".
+
+**Detect:** Ask git, which reads the bytes: `git ls-files --eol <paths>`. Its `w/` column is the working copy, so `w/lf` against `attr/text eol=crlf` is drift. For the whole tree, `git ls-files --eol | grep 'eol=crlf' | grep -vc 'w/crlf'` must print 0. Otherwise count the bytes (`0x0D 0x0A` against a bare `0x0A`) in a real language, not through a shell pattern.
+
+**Do instead:** Never verify line endings with a pattern that contains a control character typed into a shell command. Use `git ls-files --eol`, or read the bytes. When a check and git's own warning disagree, believe the warning until the bytes say otherwise.
 
 ## G. Automated pattern detectors
 
@@ -1107,6 +1256,16 @@ not predict.
 
 ---
 
+### H4. Endpoint security can refuse to start the browser a test runner launches
+
+**What breaks:** Playwright launches Chromium-family browsers with default flags that include `--disable-extensions` and `--disable-component-extensions-with-background-pages`. On a managed machine, an endpoint browser-security agent can treat a command line that bypasses the organisation's force-installed extensions as a policy violation, and refuse to start the browser at all.
+
+**Presents as:** Every browser test failing at launch while the rest of the suite passes and nothing in the page has changed. It looks like a broken browser install or a broken test runner. The real explanation is on screen, in a dialog per launch, which an agent that never takes a screenshot never sees.
+
+**Detect:** When a browser suite fails entirely at launch, look for a dialog before reading the code. Launch the browser by hand with the runner's default flags and see whether it is refused.
+
+**Do instead / remedy:** Remove those two defaults with Playwright's `ignoreDefaultArgs`, so the managed extensions load. The profile is still fresh and disposable, which is the isolation H3 asks for. The only change is that the organisation's extensions are now in it, so treat any test those extensions could affect as dependent on the environment.
+
 ## I. PowerShell language and cmdlet semantics
 
 These are language- and cmdlet-level rather than environment-level, and they are here for the same reason as the rest of this file: an agent writing PowerShell meets them repeatedly, and nearly every one of them **presents as success**. All were met in real work on a production PowerShell codebase; several cost a debugging session apiece, and I1 alone accounted for four separate defects.
@@ -1122,6 +1281,19 @@ This section is to PowerShell what C is to Python: the language and its runtime,
 **Detect:** Exercise every collection-returning function at zero, one, *and* two elements, and assert the returned **type** (`-is [array]`) as well as the count. A test that only asserts on content passes in the broken case.
 
 **Do instead:** `return , @($items)` for arrays, `return , $list.ToArray()` for generic lists — and then delete any `@()` the callers wrap around the call, because the two fixes do not compose. Whichever convention you pick, apply it at the boundary and state it once, rather than per call site.
+
+**A further form of this trap.**
+
+**What breaks:** Three more forms of the same trap, plus one related one.
+1. A guard written `-not @(Get-Thing ...).Count`, around a function that correctly returns `, @(...)`, is false forever. The outer `@()` wraps the returned array as its single element, so the count is 1 whatever the function returned, and the feature behind the guard silently never runs.
+2. That guard passes its own unit tests. A test that calls the function across a module boundary (`& $module { ... }`, or `InModuleScope`) gets the wrapper unrolled and sees a flat array. Only the direct call inside the module nests.
+3. Piping a collection straight into `Should -Contain` can fail while printing a collection that plainly contains the value: *"Expected 'x' to be found in collection @(x), but it was not found."* A one-element collection unrolls in the pipeline and arrives as a scalar, and the message gives no hint that the shape is the problem.
+
+Separately, `@($list)` over a generic `List` has been observed to throw `Argument types do not match`, not only `, @($list)`. In the measured case it sat inside a report writer whose failures were caught and logged as a warning, so every report silently stopped being written.
+
+**Detect:** Test the guard, not only the function: a feature gated on a count needs a test proving the gated path actually runs. In tests, call collection-returning functions the same way production calls them.
+
+**Do instead:** Assign a result to a variable before asserting on it, and pipe the variable. Convert generic lists with `.ToArray()` before using any array idiom on them.
 
 ### I2. `@($null)` has a Count of 1
 
@@ -1168,6 +1340,14 @@ This section is to PowerShell what C is to Python: the language and its runtime,
 **Presents as:** A loud binding error complaining about a type mismatch on a parameter that has no declared type — which reads as nonsense, and sends you looking at the argument rather than at the attribute.
 
 **Do instead:** Type the parameter `[object[]]`.
+
+**A further form of this trap.**
+
+**What breaks:** Two related cases. (1) A `[Parameter(Mandatory)]` collection parameter refuses an *empty* collection (*"Cannot bind argument to parameter 'X' because it is an empty collection"*). A new caller of a function whose usual caller always pre-fills the collection therefore fails at binding. In the measured case, a second caller passed a fresh, empty list to a feasibility check, and every item that check covered was refused, whatever its content. (2) `[AllowEmptyCollection()]` and `[AllowEmptyString()]` grant different things. The first lets an empty array bind; the second lets empty *elements* bind. A `[string[]]` parameter with only the first refuses `@('a', '', 'b')`, which is what nearly every text file looks like, because text files have blank lines.
+
+**Presents as:** A binding refusal that reads as the caller passing nothing. In case (1) it is caught one level up and reported as a verdict about the item rather than as an error.
+
+**Do instead:** A mandatory collection parameter that may legitimately be empty carries `[AllowEmptyCollection()]`. A parameter that takes the lines of a file carries both attributes.
 
 ### I7. An unbound typed parameter is null, and forwarding it throws
 
@@ -1217,6 +1397,136 @@ This section is to PowerShell what C is to Python: the language and its runtime,
 
 **Do instead:** Put anything that must observe a mock into `BeforeEach`, or after the mock declaration in a separate block — never in the same `BeforeAll` that declares it.
 
+**A further form of this trap.**
+
+**What breaks:** Pester's phases lose more than mocks. (3) A variable set in `BeforeDiscovery` is gone by the time a test body runs. `-Skip:` and `-ForEach` can read it, but the body cannot. A loop over it in the body runs zero times, and the test passes having compared nothing. One such test went green against a validator that refused every input. (4) The misleading *"break or continue statement escaped"* error has also appeared for two other causes. One was runaway recursion: a walk over `@($node.children)` where the property did not exist kept recursing into `@($null)` (see I2). The other was a `BeforeDiscovery` variable read in `BeforeAll` under strict mode, where the read throws.
+
+**Presents as:** (3) SUCCESS, with an empty loop. (4) A failure that only happens inside the project's suite runner, because the runner sets `Set-StrictMode -Version Latest` and a direct `Invoke-Pester` of the same file does not.
+
+**Detect:** Assert how many cases there are before looping over them. When a file fails only under the suite runner, suspect strict mode.
+
+**Do instead:** Pass discovery-time data into the body through the test's own data, `-ForEach @(@{ Cases = $script:Corpus })`, and then loop over `$Cases`.
+
+### I12. A deliberate `throw` and a runtime fault are the same exception type
+
+**What breaks:** Code that decides whether an error message is fit for a person to read (a user-facing API, a UI banner, a support ticket) cannot make that decision on the exception type. In PowerShell, a bare `throw 'a sentence written for a human'` produces `RuntimeException`. So does dividing by zero, and so does calling a method on `$null`. A type check written to pass deliberate refusals through therefore also passes *"Attempted to divide by zero."* and *"You cannot call a method on a null-valued expression."* straight to whoever clicked the button.
+
+**Presents as: SUCCESS at the wrong job.** The filter runs, the deliberate messages arrive intact, and it looks like it works, because the cases you test with are the ones you wrote. It only fails on the errors nobody planned, which is exactly the set it existed to catch, and each leak is a one-off that nobody reproduces.
+
+**Detect:** Test the classifier against genuine faults, not only against your own throws: a null method call, a bad cast, a division by zero, a missing file, a rejected parameter. Pin the negative case too. A test asserting that `throw`, `1/0` and `$null.Substring(0)` all share one exception type stops anyone "simplifying" the check back to a type test later.
+
+**Do instead:** Tell them apart by `FullyQualifiedErrorId`. PowerShell sets it to the thrown string itself for a bare `throw`, and to a symbolic id (`InvokeMethodOnNull`, `InvalidCastFromStringToInteger`, `PathNotFound`, `ParameterArgumentValidationErrorNullNotAllowed`) for anything the engine raises. So `$_.FullyQualifiedErrorId -eq $_.Exception.Message` is true exactly when a human wrote the text. Verified on 5.1 for both kinds, including multi-sentence messages, where truncation would otherwise have turned every useful refusal into a "fault".
+
+**The general form, in any language:** you cannot recover intent from a type, and a diagnostic string is not a user-facing message. Carry the distinction explicitly (a marker on the error, a separate field, two different throw sites) rather than inferring it later. And send the diagnostics somewhere: a generic sentence with no correlation id trades a bad user experience for an error nobody can debug.
+
+### I13. `-Include` is silently ignored on Windows PowerShell 5.1 when the path is given as `-LiteralPath`
+
+**What breaks:** `Get-ChildItem -LiteralPath $dir -Recurse -File -Include '*.ps1'` filters on PowerShell 7 and returns *every* file on Windows PowerShell 5.1. The same line means two different things on the two editions. Code developed and tested on 7 ships the unfiltered behaviour to every machine that only has 5.1.
+
+**Presents as: SUCCESS** on the development machine, and a wrong answer on the target that surfaces somewhere downstream. In the measured case, an integrity check meant to inspect only signable scripts also inspected a `.json` and a `.sql` file. `Get-AuthenticodeSignature` reports file types it has no signature handler for as `UnknownError` rather than `NotSigned`, so every package was refused as tampered with, signed or not.
+
+**Detect:** Run the code under `powershell.exe` as well as `pwsh`, as part of the test suite and not by hand. Lint for `-Include` or `-Exclude` in the same call as `-LiteralPath`.
+
+**Do instead:** Filter explicitly with `Where-Object { $exts -contains $_.Extension.ToLowerInvariant() }`, which behaves the same on both editions. Where one edition is the deployment baseline, the suite must run the shipped entry points on that edition.
+
+### I14. Windows PowerShell 5.1 cannot open a path over 260 characters that PowerShell 7 opens
+
+**What breaks:** On the same machine, PowerShell 7 (on .NET) opens a file whose full path is longer than 260 characters, and Windows PowerShell 5.1 (on .NET Framework) does not. `Test-Path` answers true on 7 and false on 5.1. `Get-AuthenticodeSignature` beyond the limit is documented to answer `UnknownError`, but on Windows 11 it throws *"File ... was not found"*, which under `-ErrorAction Stop` ends the run with a raw error record. And 5.1 cannot dot-source or import a module file beyond the limit, so code installed that deep cannot load at all.
+
+**Presents as:** A confident *"does not exist"* about a file that is right there. This happens in practice, not just in theory: long user-chosen file names under a deep working folder, such as a scratch or temp directory, cross the limit easily.
+
+**Detect:** When a "missing file" appears only on 5.1, measure the full path length before believing the error.
+
+**Do instead:** Keep working roots short. Check path lengths up front and refuse with a message that names the limit. Include a deep-folder case among the tests that run on 5.1.
+
+### I15. PowerShell 7 refuses to send default credentials over plain HTTP, and the parameter that permits it does not exist on 5.1
+
+**What breaks:** On PowerShell 7, `Invoke-RestMethod` and `Invoke-WebRequest` with `-UseDefaultCredentials` against an `http://` URL throw before the request leaves the machine (*"cannot protect plain text secrets sent over unencrypted connections"*), unless `-AllowUnencryptedAuthentication` is passed. Windows PowerShell 5.1 sends the credentials without complaint and has no such parameter, so passing it there is a binding error, not a harmless extra. No single call works on both.
+
+**Presents as:** Every call to an internal HTTP service failing on 7 and working on 5.1. Where a catch block offers a diagnosis, the operator sees that diagnosis instead. In the measured case it said the server was too old to have the API, which sent the operator to check a server that was fine.
+
+**Detect:** Reproduce on both editions before diagnosing. Read the exception message itself, not a catch block's interpretation of it.
+
+**Do instead:** Check whether the parameter exists, with `(Get-Command Invoke-RestMethod).Parameters.ContainsKey('AllowUnencryptedAuthentication')`, and add it only when it exists and only for `http://`. Do not print a cause in a catch block unless the code has evidence for it (a status code you actually captured). Otherwise report the failure you got.
+
+### I16. `Set-Location` does not move the process, so a relative path means two different things
+
+**What breaks:** PowerShell's current location and the process's current directory (`[Environment]::CurrentDirectory`) are separate. Cmdlets resolve relative paths against the first. Everything else resolves them against the second: every .NET API such as `[System.IO.File]::WriteAllText`, and a native executable given `-o .\out`. If you launch a shell in the directory, the two agree. If you `Set-Location` there from anywhere else, they do not.
+
+**Presents as:** Code that works for everyone who starts their shell in the project, and for nobody else. Output lands silently under whatever directory the shell started in, or an error names a path the user never typed. At worst a write lands on a file that matters: in the measured case it overwrote a file inside the installed test framework (D17).
+
+**Detect:** Run the entry points from a shell that started somewhere else, as a test. Print the resolved path before any write.
+
+**Do instead:** Turn every path that does not exist yet into an absolute one at the entry point: `if (-not [IO.Path]::IsPathRooted($p)) { $p = Join-Path (Get-Location -PSProvider FileSystem).ProviderPath $p }`. `Resolve-Path` handles inputs, but not output paths that do not exist yet.
+
+### I17. A range slice or a concatenation of a `[byte[]]` is an `[object[]]`
+
+**What breaks:** `$bytes[3..($bytes.Length - 1)]`, the natural way to strip a byte-order mark, returns `[object[]]`, and so does `$a + $b` for two byte arrays. APIs that need a `[byte[]]` (`[Text.Encoding]::UTF8.GetString()`, a hash, a stream write) then refuse it.
+
+**Presents as:** A loud conversion error. Or, where the call sits inside a `try`/`catch` with a fallback, SUCCESS with the unconverted input: the refusal is swallowed and the unstripped bytes are used. In the measured case, the code and the test fixture written to prove it each had this defect, on the same afternoon.
+
+**Do instead:** Cast the result: `[byte[]]($bytes[3..($bytes.Length - 1)])`, `[byte[]]($a + $b)`. Never let a catch block fall back silently when a conversion that should succeed fails.
+
+### I18. `,` binds tighter than `+`, so a computed multi-dimensional index is an array expression
+
+**What breaks:** `$table[$i + 1, $j + 1]` parses as `$table[$i + (1, $j) + 1]`. The comma operator builds an array before the additions happen, so the index is an array expression and the read returns an `[object[]]`.
+
+**Presents as:** A failure one step later and somewhere else, such as *"does not contain a method named 'op_Addition'"* when the result is used, rather than at the index that caused it.
+
+**Do instead:** Put parentheses around every computed index: `$table[($i + 1), ($j + 1)]`.
+
+### I19. Invoking a scriptblock in a module's scope discards its closure
+
+**What breaks:** `& $module $scriptblock` is the mechanism behind `InModuleScope` and most test helpers that reach into a module. It rebinds the scriptblock to the module's scope, so `.GetNewClosure()` does not carry captured variables across that boundary, and inside the call they are simply undefined. There is a related problem: if the helper collects its arguments with `ValueFromRemainingArguments` and splats them, a bare array arrives as N separate positional arguments and only the first one binds.
+
+**Presents as:** Variables that are plainly set in the test turning out to be `$null` inside the call, or a collection argument arriving as just its first element. Both look like a defect in the code under test.
+
+**Do instead:** Pass values as arguments, not through a closure. Wrap a collection in a hashtable (`@{ Items = $list }`) when it has to cross a remaining-arguments splat.
+
+### I20. An `if` inside a parenthesised expression parses and then fails at run time
+
+**What breaks:** `if` is a statement, not an expression. The parser accepts `("a" + (if ($x) { 'b' } else { 'c' }) + "d")`, but at run time `(if ...)` is treated as a command call: *"The term 'if' is not recognized as a name of a cmdlet"*.
+
+**Presents as:** A runtime error only on the code path that builds that string. In the measured case a message lost its whole text while the code around it kept working, so nothing failed loudly enough to be noticed.
+
+**Do instead:** Assign the result first (`$part = if ($x) { 'b' } else { 'c' }`), or use a subexpression, `$(if ...)`, which does accept statements.
+
+### I21. A function whose name is an existing alias never runs
+
+**What breaks:** PowerShell resolves aliases before functions. A helper with the same name as a built-in alias, such as `function h { }` (`h` is `Get-History`), `r`, `gc` or `ls`, is never called. The call goes to the aliased cmdlet and fails somewhere unrelated.
+
+**Presents as:** A binding or behaviour error from a cmdlet the code never mentions, at a call site that clearly names the helper.
+
+**Detect:** `Get-Command <name>` shows what a name resolves to, and `Get-Alias <name>` shows whether the name is already taken.
+
+**Do instead:** Give helpers a verb-noun name. The short built-in aliases never use that form.
+
+### I22. A non-terminating cmdlet error does not stop the function, so the next line reports the wrong problem
+
+**What breaks:** Many cmdlets report failure as a *non-terminating* error: they write an error record and the script carries on. `Copy-Item` on a file held open by another process behaves this way. The backup it was meant to take does not exist, and execution continues into the code that depends on it.
+
+**Presents as:** An accurate report of the wrong problem. Here it was *"The property 'Length' cannot be found on this object"*, raised on the next line about a backup that was never made. The real cause is further up the error stream, if anyone reads it.
+
+**Detect:** When an error about a missing property or a null object comes straight after a file or process cmdlet, look for a non-terminating error from that cmdlet.
+
+**Do instead:** Pass `-ErrorAction Stop` to any cmdlet whose success the next line depends on, or set `$ErrorActionPreference = 'Stop'` for the scope, and handle the failure where it happens.
+
+### I23. `Read-Host` prompts do not appear in redirected output, so a piped-input test cannot see them
+
+**What breaks:** Pipe answers into `powershell.exe -File script.ps1` and the captured output contains every `Write-Host` line and none of the `Read-Host` prompts.
+
+**Presents as:** A test that checks a prompt's wording fails as though the prompt were missing.
+
+**Do instead:** In the test, run the script with a function named `Read-Host` defined, one that prints its prompt and reads stdin. Functions take precedence over cmdlets, so the script calls it instead of the real cmdlet. Pass the wrapper as `-EncodedCommand`, so that no quote in it survives to split a native argument list (A4).
+
+### I24. Pester 6: a mock with `-ParameterFilter` and no default fails every call the filter does not match
+
+**What breaks:** When a call matches no filter, Pester 6 answers *"No mock for command ... matched the call"* instead of running the real command. So mocking `Copy-Item` for one destination breaks every other copy in the code under test.
+
+**Presents as:** Failures in code the test was not about. In the measured case it was the backup copy taken before the mocked one, and the failures looked like a regression in that code.
+
+**Do instead:** Next to a filtered mock, add an unfiltered default that calls the real command: `Mock Copy-Item { Microsoft.PowerShell.Management\Copy-Item @PesterBoundParameters }`.
+
 ## J. Toolchain availability: absent command, present capability
 
 ### J1. No CLI does not mean no API — the credential is already on the machine
@@ -1228,6 +1538,39 @@ This section is to PowerShell what C is to Python: the language and its runtime,
 **Detect:** Distinguish *unsupported* from *unconfigured*, *logged out*, or *merely lacking one particular client*. Query the credential store and probe the service interface before concluding anything about capability.
 
 **Do instead:** Before declaring any platform, tool or runtime incapable of an operation, verify against current documentation and probe the installed surface plus its authentication state. Absence of a convenience wrapper says nothing about the capability underneath it.
+
+### J2. A command on the path can be an installer stub: `python` on Windows runs nothing
+
+**What breaks:** On Windows machines without Python, `python` and `python3` resolve to App Execution Alias stubs under `%LOCALAPPDATA%\Microsoft\WindowsApps`. Run with arguments, the stub prints *"Python was not found; run without arguments to install from the Microsoft Store, or disable this shortcut from Settings > ... App execution aliases."* and exits. Run without arguments, it opens the Store. This is the reverse of J1: the command is present and the capability is not.
+
+**Presents as:** An agent that reached for a Python one-liner to edit a file gets no edit, and one line of output that is easy to dismiss as noise. The availability checks agree with the agent: `command -v python` and `Get-Command python` both succeed, so nobody suspects the tool is missing. If nothing reads the exit status (a `;` chain, a wrapper), the step looks like an edit that matched nothing (A1).
+
+**Detect:** Resolve the path: a hit under `WindowsApps` is the stub. Require a real answer from the tool, such as `python --version` printing a version, rather than just its presence on the path. From Git Bash the stub exited with status 49, which is 9009 truncated to 8 bits.
+
+**Do instead:** Check that a real interpreter works before planning work around it. For file edits, prefer the agent's own file-editing tool, or the platform's native shell, over an interpreter you assume exists.
+
+### J3. A local instance reported missing or stopped may be running, and invisible only to this client or this session
+
+**What breaks:** A per-user local service that starts on demand is reached through a client-side runtime, and it belongs to the session that started it. Either of those can hide a running instance, and SQL Server LocalDB shows both. (1) With two LocalDB versions installed, an older client runtime cannot see a newer instance. It reports *"the specified LocalDB instance does not exist"* while the server is running and every database is intact. (2) An instance started from one shell is not visible from a second shell running in a different context, such as a sandboxed terminal or another tool's process. That shell sees it as stopped with an empty address, and its `start` then fails against the live process.
+
+**Presents as:** A confident "not there" or "stopped" from the service's own tooling, which invites a repair: recreate the instance, restart it, kill the process. At best the repair is unnecessary; in case (2) it breaks the session that owns the instance. Where tests skip on an unreachable dependency, every one of them skips (D15).
+
+**Detect:** Ask a second way: check the process table (`Get-CimInstance Win32_Process` for the server process and its command line), and try a direct connection by pipe name. List the installed versions (`sqllocaldb versions`) when more than one client could be answering.
+
+**Do instead:** Connect to the instance's pipe name directly rather than through the name lookup, and test the connection first (B3). Run work that needs the instance from the shell that started it. Do not repair an instance on the strength of one client's view of it.
+
+### J4. A launcher tested from a shell inherits that shell's environment, so the test is not a double-click
+
+**What breaks:** A child process inherits its parent's environment, and several things a launcher depends on live there. There are three versions of this, each observed.
+1. PowerShell 7 puts its own module folders in `PSModulePath`. A `.cmd` started from it passes the variable on untouched, and `powershell.exe` then fails to auto-load even built-in modules: *"Get-AuthenticodeSignature ... the module could not be loaded"* (`CouldNotAutoloadMatchingModule`). When pwsh starts `powershell.exe` directly, it repairs the variable, which is why the tests that did that passed.
+2. A process-scope execution policy is actually the inherited variable `PSExecutionPolicyPreference`. A test runner started under `Bypass` passes it to every child. A launcher that had lost its own `-ExecutionPolicy Bypass` therefore still ran in the test, and failed on every real machine.
+3. `cmd.exe` looks for a bare program name in the current directory before searching `PATH`. A double-clicked launcher's current directory is its own folder, so it runs any `powershell.exe` placed there. A machine with `NoDefaultCurrentDirectoryInExePath` set never shows this.
+
+**Presents as: SUCCESS** in every test that starts the launcher from the agent's or the runner's shell. When a person double-clicks it on a machine that differs by one variable, it fails, or runs a different executable.
+
+**Detect:** Compare the child's environment with a fresh logon's for the variables above. Run launcher tests in a cleaned environment: remove `PSExecutionPolicyPreference`, clear `PSModulePath`, and clear `NoDefaultCurrentDirectoryInExePath`.
+
+**Do instead:** Make launchers reset what they depend on: `set "PSModulePath="` lets Windows PowerShell rebuild its own value. Name executables by full path, and pass the launcher's own execution policy. A test that stands in for a double-click removes the inherited variables first.
 
 ## K. Publishing and releases
 
@@ -1255,3 +1598,37 @@ FALSE, then assert the current version is still current — an assertion rather 
 assumption, because the failure cannot be seen in the creation response. And take the
 release body from the tag's own annotation or the changelog's own section, so the published
 notes and the repository's record cannot drift.
+
+## L. Database and service clients: session state, data state, and answers that are not answers
+
+Every entry here is the same failure: code asked a server something and trusted the answer, or trusted the conditions it asked under, when the answer depended on something the client did not control -- the session settings it connected with, the state of the data, or which resource was asked.
+
+### L1. Two SQL clients connect with different SET options, and a module keeps the ones it was created under
+
+**What breaks:** The classic ODBC `sqlcmd` connects with `QUOTED_IDENTIFIER OFF` unless given `-I`, while SSMS and the .NET and ODBC drivers connect with it `ON`. SQL Server stores `QUOTED_IDENTIFIER` and `ANSI_NULLS` with each procedure, function and trigger as they were *when it was created*, and ignores the caller's setting when it runs. Some modules need the setting on at run time: those that use XML data-type methods, including the common `FOR XML PATH(''), TYPE).value(...)` string-aggregation idiom, and those that touch a filtered index, an indexed view or an indexed computed column. If such a module was created through `sqlcmd`, it fails at run time with error 1934 (*"... failed because the following SET options have incorrect settings: 'QUOTED_IDENTIFIER'"*).
+
+**Presents as:** A script that works when deployed from one client and fails when deployed from another, with `CREATE` succeeding either way. The failure appears on first execution, possibly much later and from a different caller, and names a SET option that the failing caller's own session has set correctly.
+
+**Detect:** After deployment, run `SELECT uses_quoted_identifier, uses_ansi_nulls FROM sys.sql_modules WHERE object_id = OBJECT_ID('<module>')`. Compare `SESSIONPROPERTY('QUOTED_IDENTIFIER')` in each client.
+
+**Do instead:** Deploy through one client with known settings, and pass `-I` to `sqlcmd`. Alternatively, make scripts set it themselves: put `SET QUOTED_IDENTIFIER ON; SET ANSI_NULLS ON;` in a batch *before* the `CREATE` batch. A `SET` inside the module body does not change the stored setting. Test deployment through the client production will actually use.
+
+### L2. A locking defect reproduces only in the data state that produced it, because the plan decides what gets locked
+
+**What breaks:** Whether one connection waits on another's locks depends on which rows a statement touches. That depends on the query plan, and the plan depends on the data. In the observed case, code wrote a record on a second connection to a table that an open transaction on the first connection had already written to. On a freshly installed table holding only a few wide rows, the optimiser scanned the table for the `MERGE` instead of seeking on the unique key. The scan hit the transaction's locked rows, and each step waited out the lock timeout. On a long-lived test database whose copy of the table held dozens of rows, the same statement used a seek, touched only its own row, and never waited.
+
+**Presents as:** A test written to reproduce the defect that passes with the fix taken out, so it proves nothing. In production the failure looks like an environment problem (a slow server, a blocking job) rather than a defect in the code.
+
+**Detect:** Revert the fix and confirm the test fails. A locking test that passes both ways is testing the data, not the code. Look at the actual execution plan in the failing state.
+
+**Do instead:** Reproduce locking and concurrency defects on a database created for the test, in the same state as the failing one (freshly installed, with the same row counts and widths), not on a shared, long-lived test database. Prefer designs that do not write from a second connection into a table an open transaction holds.
+
+### L3. A successful response has not necessarily answered the question
+
+**What breaks:** An HTTP 200 means the server handled the request, not that it had the answer. A report server's REST endpoint for a named system property returned `200` with `"value": []` on two major versions alike, because the version lived on a different resource. The code checked for an exception, got none, and read `$null`. So the version check always passed, always produced nothing, and the feature that depended on it silently never appeared.
+
+**Presents as: SUCCESS.** No error and no warning. A missing value looks exactly like a legitimately empty one, and in a language that returns `$null` for a missing property it does not even throw.
+
+**Detect:** Assert on the content: check that the value is present and has the expected shape. Look at a raw response from a real server once before writing the parser.
+
+**Do instead:** When a call that should return a value returns an empty or null result, treat it as a failed query until something shows the empty answer is real. Test against a real server, because a mock returns whatever its author expected.
