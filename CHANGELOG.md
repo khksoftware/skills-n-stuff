@@ -4,6 +4,19 @@ All notable changes to these skills are recorded here. Versions follow
 [Semantic Versioning](https://semver.org/), read against the skills as a
 published set rather than against any single file.
 
+## 3.3.0 — 2026-09-30
+
+### Added
+
+Two traps, each from an observed and measured failure. This release is additive only; no skill
+changed.
+
+- **`E25`: a read-only `git status` takes `index.lock`, and a killed caller leaves it behind.**
+  Set `GIT_OPTIONAL_LOCKS=0` for any background or polling tool that runs git.
+- **`E26`: a `reference-transaction` hook fires per ref per phase, so its start-up cost
+  multiplies.** Exit before starting anything in `committed` and `aborted`, whose exit status git
+  ignores.
+
 ## 3.2.0 — 2026-09-29
 
 ### Added

@@ -943,6 +943,28 @@ not predict.
 
 **Remedy:** Restore the reverted lines from the commit the check names, and re-run the tests that cover that fix.
 
+### E25. A read-only `git status` takes `index.lock`, and a killed caller leaves it behind
+
+**What breaks:** plain `git status` refreshes the index opportunistically, and takes `.git/index.lock` to do it. A background tool that polls status in a loop, and is killed or restarted mid-refresh, leaves an unheld lock. Every later commit then fails.
+
+**Presents as:** `Unable to create '.git/index.lock': File exists`, with no git process running, recurring at irregular times in a repository where background tooling polls `git status`.
+
+**Detect:** Check whether anything holds the lock (on Windows, an exclusive `FileShare.None` open that succeeds means nothing does). Compare the lock's modification time with when a background run started.
+
+**Do instead:** Set `GIT_OPTIONAL_LOCKS=0` in the environment of any background or polling tool before it runs git. It disables only the opportunistic refresh, never a lock a write needs.
+
+**Remedy:** Remove the lock only after proving nothing holds it, and say that you did.
+
+### E26. A `reference-transaction` hook fires per ref per phase, so its start-up cost multiplies
+
+**What breaks:** git runs a `reference-transaction` hook for each phase of a ref transaction (`prepared`, `committed`, `aborted`), and ref-heavy commands such as `pack-refs` and `gc` fire it per ref. On Windows, each firing that starts git or an interpreter costs about a tenth of a second. A hook that does real work in every phase turns a sub-second `pack-refs` into minutes.
+
+**Presents as:** a hang. `git gc` or `git pack-refs` sits for minutes at almost no CPU and no I/O, with the hook as its child process.
+
+**Detect:** Time the same command with `git -c core.hooksPath=<an empty directory>`. A large gap with no single blocking call is start-up cost multiplied, not a deadlock.
+
+**Do instead:** Exit the hook before starting anything in the phases that cannot change the outcome. git ignores the exit status of `committed` and `aborted`, so only `prepared` needs the real check.
+
 ## F. Content-hash pinning and line endings
 
 ### F1. A fresh clone is not a byte-faithful copy when hash pins, CRLF, and path limits are involved
