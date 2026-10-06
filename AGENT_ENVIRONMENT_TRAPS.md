@@ -1527,6 +1527,16 @@ Separately, `@($list)` over a generic `List` has been observed to throw `Argumen
 
 **Do instead:** Next to a filtered mock, add an unfiltered default that calls the real command: `Mock Copy-Item { Microsoft.PowerShell.Management\Copy-Item @PesterBoundParameters }`.
 
+### I25. A function shadowing a module's command is replaced when the module autoloads
+
+**What breaks:** A test that shadows a module's command with a same-named `function`, such as `function Register-ScheduledTask { }` to stop a script registering anything, loses the shadow as soon as the script calls any other command from that module. That call autoloads the module, and the module's own commands, which for ScheduledTasks are functions, are imported over the shadow.
+
+**Presents as: success, with the real side effect the shadow existed to prevent.** In the measured case, a test of a scheduled-task registration script registered a real task on the developer's machine. An earlier probe had shown the shadow working only because it never triggered an autoload.
+
+**Detect:** After defining shadows, force the autoload by calling one harmless command from the module. Then assert, for every shadowed name, that `Get-Command <name>` still resolves to the shadow, before the code under test runs. Check the side effect afterwards too.
+
+**Do instead:** `Import-Module` the module first, define the shadows after it, prove each one survives a forced use, and abort the test if any does not. Better, give the script a definition-only mode so the test never needs the real cmdlets in reach. Where Pester is in use, `Mock -ModuleName` is the framework's own route.
+
 ## J. Toolchain availability: absent command, present capability
 
 ### J1. No CLI does not mean no API — the credential is already on the machine

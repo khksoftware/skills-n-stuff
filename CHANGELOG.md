@@ -4,6 +4,14 @@ All notable changes to these skills are recorded here. Versions follow
 [Semantic Versioning](https://semver.org/), read against the skills as a
 published set rather than against any single file.
 
+## Unreleased
+
+### Added
+
+- **`I25`** a function shadowing a module's command is replaced when the module autoloads, so a
+  test meant to keep a script from registering a scheduled task registered a real one. Measured on
+  the source project's own machine.
+
 ## 3.4.1 — 2026-10-06
 
 ### Changed
