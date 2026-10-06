@@ -8,6 +8,8 @@ published set rather than against any single file.
 
 ### Added
 
+- **`E27`** concurrent commits in one worktree share `COMMIT_EDITMSG`, and committing on a private
+  index skips the `index.lock` that serialises them, so one commit can land under the other's message.
 - **`I25`** a function shadowing a module's command is replaced when the module autoloads, so a
   test meant to keep a script from registering a scheduled task registered a real one. Measured on
   the source project's own machine.

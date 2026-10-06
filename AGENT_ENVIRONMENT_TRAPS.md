@@ -1084,6 +1084,16 @@ not predict.
 
 **Do instead:** Exit the hook before starting anything in the phases that cannot change the outcome. git ignores the exit status of `committed` and `aborted`, so only `prepared` needs the real check.
 
+### E27. Concurrent commits in one worktree share `COMMIT_EDITMSG`, and a private index skips the lock that keeps them apart
+
+**What breaks:** Two `git commit`s in one worktree both write their message to that worktree's `.git/COMMIT_EDITMSG`, run the message hooks on it, and read it back. Normally `.git/index.lock` keeps them apart. A commit made with `GIT_INDEX_FILE` set to a private index never takes that lock, so it can overlap another committer and be created with the other commit's message.
+
+**Presents as: a commit that succeeded under the wrong message.** In the measured case, one agent's change landed under a second agent's subject, and the second agent then re-made its own commit with the same subject. A check that HEAD moved calls it landed. A check of the subject calls it not landed, while the content is in fact committed.
+
+**Detect:** After every commit, compare HEAD's full message with the one you passed, and `git show --stat HEAD` with the paths you staged. When a commit reports not landed, look for your content under an unfamiliar subject before retrying.
+
+**Do instead:** Hold the worktree's `index.lock` (create it exclusively) for the whole of a private-index commit, or use `git commit --only <paths>`, which builds its temporary index under that lock. Better, keep concurrent committers out of one worktree.
+
 ## F. Content-hash pinning and line endings
 
 ### F1. A fresh clone is not a byte-faithful copy when hash pins, CRLF, and path limits are involved
