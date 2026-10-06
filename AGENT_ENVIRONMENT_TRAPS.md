@@ -1062,15 +1062,15 @@ not predict.
 
 **Remedy:** Restore the reverted lines from the commit the check names, and re-run the tests that cover that fix.
 
-### E25. A read-only `git status` takes `index.lock`, and a killed caller leaves it behind
+### E25. A read-only `git status` or worktree `git diff` takes `index.lock`, and a killed caller leaves it behind
 
-**What breaks:** plain `git status` refreshes the index opportunistically, and takes `.git/index.lock` to do it. A background tool that polls status in a loop, and is killed or restarted mid-refresh, leaves an unheld lock. Every later commit then fails.
+**What breaks:** plain `git status`, and a worktree `git diff` (against the index or a commit), refresh the index opportunistically and take `.git/index.lock` to do it. A background tool or editor integration that polls either in a loop, and is killed or restarted mid-refresh, leaves an unheld, zero-byte lock. Every later commit then fails. (A killed commit leaves a lock that already holds the new index, so a zero-byte lock points at a read-only refresher.)
 
 **Presents as:** `Unable to create '.git/index.lock': File exists`, with no git process running, recurring at irregular times in a repository where background tooling polls `git status`.
 
 **Detect:** Check whether anything holds the lock (on Windows, an exclusive `FileShare.None` open that succeeds means nothing does). Compare the lock's modification time with when a background run started.
 
-**Do instead:** Set `GIT_OPTIONAL_LOCKS=0` in the environment of any background or polling tool before it runs git. It disables only the opportunistic refresh, never a lock a write needs.
+**Do instead:** Set `GIT_OPTIONAL_LOCKS=0` (or pass `--no-optional-locks`) in the environment of any background or polling tool before it runs git. It disables only the opportunistic refresh, never a lock a write needs. `git status` honours it; a worktree `git diff` takes the lock regardless, so a polling diff must use `git diff --cached` or a two-tree `git diff <a> <b>`.
 
 **Remedy:** Remove the lock only after proving nothing holds it, and say that you did.
 

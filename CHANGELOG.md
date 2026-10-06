@@ -4,6 +4,15 @@ All notable changes to these skills are recorded here. Versions follow
 [Semantic Versioning](https://semver.org/), read against the skills as a
 published set rather than against any single file.
 
+## Unreleased
+
+### Changed
+
+- **`E25`** now covers a worktree `git diff` as well as `git status`: measured, `git diff <commit>`
+  takes `index.lock` with `GIT_OPTIONAL_LOCKS=0` set (six of six runs), so the switch protects
+  `status` only, and a polling diff must use `git diff --cached` or a two-tree diff. A zero-byte
+  orphan is a killed read-only refresher; a killed commit leaves a lock holding the new index.
+
 ## 3.4.0 — 2026-09-30
 
 ### Added
