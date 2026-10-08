@@ -4,7 +4,7 @@ All notable changes to these skills are recorded here. Versions follow
 [Semantic Versioning](https://semver.org/), read against the skills as a
 published set rather than against any single file.
 
-## Unreleased
+## 3.5.0 — 2026-10-08
 
 ### Added
 
