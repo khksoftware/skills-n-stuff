@@ -548,6 +548,18 @@ Increasing the timeout cannot repair a bounded-buffer deadlock.
 
 **Remedy:** `subprocess.run(chain_string, shell=True)` where you own the call; otherwise `subprocess.run([interpreter, helper_script, arg1, arg2, ...])`, with the helper taking every path from its own arguments and embedding none.
 
+### C12. A process without a console gives every console program it starts a visible window of its own
+
+**What breaks:** On Windows a console program inherits its parent's console when the parent has one. A process started with `DETACHED_PROCESS` has *no* console, so every console program it then starts -- `git`, `python`, a test's subprocess -- is given a brand-new console, and on current Windows that console is drawn as a visible terminal window. A scheduled task that runs "only when the user is logged on" draws a window for its own console program on every run, for the same reason.
+
+**Presents as:** Terminal windows flashing open on the user's desktop at irregular times, from nothing they started: a burst whenever a detached background worker runs a batch, one every few minutes from a scheduled task. Every exit code is zero and no log is wrong. The agent's own shell, its background jobs and its hooks draw nothing, so the windows read as somebody else's. **The detached parent's own launch is silent; only its children flash**, which hides the cause one process level down.
+
+**Detect:** Poll the visible top-level windows of the console and terminal window classes every 50-100 ms and, on each new one, list the processes started in the previous few seconds with their parents. The window's client will be a console program whose parent was launched detached, or a scheduled task's action. In code, search for `DETACHED_PROCESS`; in the task scheduler, look for logged-on-only tasks whose action runs a shell or an interpreter directly.
+
+**Do instead:** Start background processes with `CREATE_NO_WINDOW` (with `CREATE_NEW_PROCESS_GROUP`, and job breakaway where the job allows it), never `DETACHED_PROCESS`. It gives the child a hidden console of its own, which its children inherit, and it still does not share the starter's console, so the child still outlives the shell that started it. Register a scheduled task's action as `conhost.exe --headless "<program>" <arguments>`, which runs the console program with no window at all.
+
+**Remedy:** Replace `DETACHED_PROCESS` with `CREATE_NO_WINDOW` at the spawn site, and re-register each logged-on-only task with its action wrapped in `conhost.exe --headless`. Verify with the window poll while the process runs: zero new windows.
+
 ## D. pytest and test collection scope
 
 ### D1. pytest cache residue lands inside a directory governed by an exact-file allowlist
