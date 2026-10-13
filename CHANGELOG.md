@@ -4,6 +4,18 @@ All notable changes to these skills are recorded here. Versions follow
 [Semantic Versioning](https://semver.org/), read against the skills as a
 published set rather than against any single file.
 
+## 3.6.0 — 2026-10-13
+
+### Added
+
+- **`C12`** a process without a console gives every console program it starts a visible window of
+  its own: a child of a `DETACHED_PROCESS` parent, or a logged-on-only scheduled task's console
+  action, flashes a terminal on the user's desktop. Start background work with `CREATE_NO_WINDOW`
+  and wrap a task's action in `conhost.exe --headless`.
+- **`C13`** isolated mode (`python -I`) also drops the per-user site-packages, so a dependency
+  installed with `pip install --user` is missing and a working module reads as broken. Use `-P` or
+  an explicit `sys.path` when the goal is only to stop directory shadowing.
+
 ## 3.5.0 — 2026-10-08
 
 ### Added
