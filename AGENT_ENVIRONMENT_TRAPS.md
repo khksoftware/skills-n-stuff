@@ -560,6 +560,18 @@ Increasing the timeout cannot repair a bounded-buffer deadlock.
 
 **Remedy:** Replace `DETACHED_PROCESS` with `CREATE_NO_WINDOW` at the spawn site, and re-register each logged-on-only task with its action wrapped in `conhost.exe --headless`. Verify with the window poll while the process runs: zero new windows.
 
+### C13. Isolated mode hides the user site, so a dependency installed there reads as broken code
+
+**What breaks:** `python -I` (isolated mode) also ignores `PYTHON*` environment variables and leaves the per-user site-packages directory off `sys.path`; `-s` alone does the latter. On a machine where a dependency was installed with `pip install --user`, that dependency does not exist under `-I`, and neither does anything that imports it. Isolation is often recommended, rightly, to stop the current or script directory from shadowing modules, and that advice silently removes the user site too.
+
+**Presents as:** Importing the code under test fails with `ModuleNotFoundError` for a third-party package that is plainly installed, and the same import succeeds in an ordinary `python -c`. The traceback ends inside a library several frames below the module being checked, so it reads as the module, or its dependencies, being broken. A smoke test written with `-I` reports a working module as unimportable.
+
+**Detect:** Run the same import without `-I` and without `-s`. From an ordinary interpreter, print `site.ENABLE_USER_SITE`, `site.USER_SITE` and the failing package's `__file__`; if the package sits under the user site, this is the trap. `python -m site` shows whether the user site is enabled.
+
+**Do instead:** When the goal is only to keep the current or script directory from shadowing modules, run from a directory outside the tree and put the paths you need on `sys.path` explicitly, or use `-P` (Python 3.11+), which drops only the script-directory entry. Use `-I` only where a fully isolated interpreter is genuinely wanted, and then say that user-site packages are absent by design.
+
+**Remedy:** Re-run without `-I`. If the import succeeds, the module is not broken. Then either drop `-I` for that check, install the dependency into the interpreter's own site-packages, or record that the check runs isolated and what that excludes.
+
 ## D. pytest and test collection scope
 
 ### D1. pytest cache residue lands inside a directory governed by an exact-file allowlist
