@@ -584,6 +584,18 @@ Increasing the timeout cannot repair a bounded-buffer deadlock.
 
 **Remedy:** Re-run without `-I`. If the import succeeds, the module is not broken. Then either drop `-I` for that check, install the dependency into the interpreter's own site-packages, or record that the check runs isolated and what that excludes.
 
+### C14. A file another process has memory-mapped refuses a truncating write as "Invalid argument"
+
+**What breaks:** On Windows, opening an existing file for writing with truncation (`open(path, "w")` in Python) fails while any other process holds that file memory-mapped. Python reports it as `OSError: [Errno 22] Invalid argument`, with no Windows error code attached. Version control tools map files to hash them, so a status or diff run over a large modified file -- from another session, an editor's background diff, or a commit helper -- can hold exactly the file you are about to rewrite. A plain read handle does not cause it.
+
+**Presents as: a bad path on a file you just wrote.** The path exists and is spelled right, the same call succeeded moments earlier, and a retry a moment later succeeds. It tends to hit the largest modified file in a folder, the one that takes longest to hash. A tool that writes several files in sequence stops part-way, leaving some files new and some old.
+
+**Detect:** `OSError` with `errno == 22` and no Windows error code from a truncating open of an existing, writable file, which then succeeds on retry. The error does not say which process holds the mapping. You can confirm the mechanism in a minute: map a file read-only in one process, and a second process's `open(path, "w")` on it fails exactly this way, then succeeds once the mapping is closed.
+
+**Do instead:** Retry the truncating open on errno 22 a bounded number of times with a short sleep, and log each retry. Gate every step that reads the written files on the writer's exit status, and confirm a set of files written together came from one complete pass before anything uses it. Writing to a temporary file and renaming it into place does not avoid the problem: a rename onto a file another process holds open is refused too, and needs the same bounded retry.
+
+**Remedy:** Re-run the write; it succeeds once the other process releases the mapping. Discard any run that read a partly written set, rather than repairing it.
+
 ## D. pytest and test collection scope
 
 ### D1. pytest cache residue lands inside a directory governed by an exact-file allowlist
